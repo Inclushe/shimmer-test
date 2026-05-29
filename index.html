@@ -65,18 +65,16 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Density scales with screen size; aim for a tight dotted texture.
-    spacing = Math.max(16, Math.min(W, H) / 26);
+    spacing = Math.max(14, Math.min(W, H) / 34);
     cols = Math.ceil(W / spacing) + 1;
     rows = Math.ceil(H / spacing) + 1;
 
     dots = [];
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
-        // Slight random jitter so the field looks organic, not like a
-        // perfect printed grid.
         dots.push({
-          x: i * spacing + (Math.random() - 0.5) * spacing * 0.25,
-          y: j * spacing + (Math.random() - 0.5) * spacing * 0.25,
+          x: i * spacing,
+          y: j * spacing,
         });
       }
     }
