@@ -62,7 +62,7 @@
   <button id="enable" class="hidden">Tap to activate</button>
   <div id="toggles">
     <label><input type="checkbox" id="predictCheck" checked /> Prediction</label>
-    <label><input type="checkbox" id="smoothCheck" checked /> Smoothing</label>
+    <label><input type="checkbox" id="smoothCheck" /> Smoothing</label>
   </div>
 
 <script>
@@ -78,7 +78,7 @@
   // Smoothing: when off, snap to the target instead of easing toward it.
   // Prediction: when off, reproduce the pre-update behavior (ease toward the
   // raw reading with no extrapolation) for an A/B comparison.
-  let smoothing = true;
+  let smoothing = false;
   let prediction = true;
   smoothCheck.addEventListener("change", () => { smoothing = smoothCheck.checked; });
   predictCheck.addEventListener("change", () => { prediction = predictCheck.checked; });
