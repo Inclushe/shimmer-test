@@ -52,21 +52,49 @@
   const DOT_RADIUS = 1;          // 2px dots
   const SPOT = 0.85;             // angular radius (radians) of the "lit" zone
   const BASE_GRAY = 60;          // brightness of a far-away dot (0-255)
+  const SPREAD = 0.8;            // how far (radians) targets scatter from the start
 
   // --- Dot grid ---------------------------------------------------------
-  // Each dot also carries `target`: a random unit vector representing an
-  // orientation it "responds" to. The closer the device's current
-  // orientation vector is to this target, the whiter the dot.
+  // Each dot carries `target`: a unit vector representing an orientation it
+  // "responds" to. Targets are scattered within SPREAD radians of the
+  // device's initial orientation, and are only assigned once that first
+  // orientation reading arrives. The closer the device's current orientation
+  // is to a dot's target, the whiter the dot.
   let dots = [];
   let cols = 0, rows = 0, spacing = 0;
   let W = 0, H = 0, dpr = 1;
+  let initialVec = null;         // captured on the first orientation event
 
-  // Pick a point uniformly at random on the unit sphere.
-  function randomUnitVector() {
-    const z = Math.random() * 2 - 1;
-    const theta = Math.random() * Math.PI * 2;
-    const r = Math.sqrt(1 - z * z);
-    return [r * Math.cos(theta), r * Math.sin(theta), z];
+  // Pick a random unit vector within `maxAngle` radians of `axis`.
+  function randomVectorNear(axis, maxAngle) {
+    // Build an orthonormal basis (axis, u, v).
+    const ref = Math.abs(axis[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    let ux = axis[1] * ref[2] - axis[2] * ref[1];
+    let uy = axis[2] * ref[0] - axis[0] * ref[2];
+    let uz = axis[0] * ref[1] - axis[1] * ref[0];
+    const ul = Math.hypot(ux, uy, uz) || 1;
+    ux /= ul; uy /= ul; uz /= ul;
+    const vx = axis[1] * uz - axis[2] * uy;
+    const vy = axis[2] * ux - axis[0] * uz;
+    const vz = axis[0] * uy - axis[1] * ux;
+
+    const phi = Math.random() * Math.PI * 2;
+    const theta = maxAngle * Math.sqrt(Math.random()); // area-weighted
+    const sT = Math.sin(theta), cT = Math.cos(theta);
+    const cp = Math.cos(phi), sp = Math.sin(phi);
+    return [
+      axis[0] * cT + (ux * cp + vx * sp) * sT,
+      axis[1] * cT + (uy * cp + vy * sp) * sT,
+      axis[2] * cT + (uz * cp + vz * sp) * sT,
+    ];
+  }
+
+  // (Re)assign every dot a target near the initial orientation.
+  function assignTargets() {
+    if (!initialVec) return;
+    for (let k = 0; k < dots.length; k++) {
+      dots[k].target = randomVectorNear(initialVec, SPREAD);
+    }
   }
 
   function buildGrid() {
@@ -90,10 +118,11 @@
         dots.push({
           x: i * spacing,
           y: j * spacing,
-          target: randomUnitVector(),
+          target: null, // assigned once the initial orientation is known
         });
       }
     }
+    assignTargets(); // no-op until the first orientation reading arrives
   }
 
   // --- Orientation -> direction vector ----------------------------------
@@ -130,6 +159,12 @@
   function onOrientation(e) {
     if (e.alpha == null && e.beta == null && e.gamma == null) return;
     targetVec = orientationToVector(e.alpha, e.beta, e.gamma);
+    if (!initialVec) {
+      // First reading: anchor the dot targets around this orientation.
+      initialVec = targetVec.slice();
+      cur = targetVec.slice();
+      assignTargets();
+    }
   }
 
   // --- Render loop ------------------------------------------------------
@@ -148,14 +183,17 @@
     for (let k = 0; k < dots.length; k++) {
       const d = dots[k];
       const t = d.target;
-      // Angular distance between current orientation and this dot's target.
-      let dot = vx * t[0] + vy * t[1] + vz * t[2];
-      if (dot > 1) dot = 1; else if (dot < -1) dot = -1;
-      const ang = Math.acos(dot); // 0 = exact match, PI = opposite
+      let g = BASE_GRAY;
+      if (t) {
+        // Angular distance between current orientation and this dot's target.
+        let dot = vx * t[0] + vy * t[1] + vz * t[2];
+        if (dot > 1) dot = 1; else if (dot < -1) dot = -1;
+        const ang = Math.acos(dot); // 0 = exact match, PI = opposite
 
-      // Closeness in [0,1]; whiter as the orientation nears the target.
-      const close = Math.max(0, 1 - ang / SPOT);
-      const g = Math.round(BASE_GRAY + (255 - BASE_GRAY) * (close * close));
+        // Closeness in [0,1]; whiter as the orientation nears the target.
+        const close = Math.max(0, 1 - ang / SPOT);
+        g = Math.round(BASE_GRAY + (255 - BASE_GRAY) * (close * close));
+      }
 
       ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")";
       ctx.beginPath();
@@ -174,6 +212,12 @@
     const py = (e.clientY / H) * 2 - 1;   // -1..1
     const v = [px, py, Math.sqrt(Math.max(0, 1 - px * px - py * py))];
     targetVec = v;
+    if (!initialVec) {
+      // Desktop has no real "initial" event; anchor on first pointer move.
+      initialVec = targetVec.slice();
+      cur = targetVec.slice();
+      assignTargets();
+    }
   }
 
   // --- Sensor permission flow ------------------------------------------
