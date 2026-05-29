@@ -284,13 +284,14 @@
 
   // --- Pointer fallback (desktop / no sensor) ---------------------------
   // Maps the cursor to a synthetic orientation so the effect is testable
-  // without a real device sensor.
-  function onPointer(e) {
-    const px = (e.clientX / W) * 2 - 1;   // -1..1
-    const py = (e.clientY / H) * 2 - 1;   // -1..1
-    const v = [px, py, Math.sqrt(Math.max(0, 1 - px * px - py * py))];
-    ingestVector(v);
-  }
+  // without a real device sensor. Disabled because on touch devices a tap
+  // fires pointer events and spuriously triggers the effect.
+  // function onPointer(e) {
+  //   const px = (e.clientX / W) * 2 - 1;   // -1..1
+  //   const py = (e.clientY / H) * 2 - 1;   // -1..1
+  //   const v = [px, py, Math.sqrt(Math.max(0, 1 - px * px - py * py))];
+  //   ingestVector(v);
+  // }
 
   // --- Sensor permission flow ------------------------------------------
   // iOS 13+ Safari (and some others) require an explicit user gesture +
@@ -325,7 +326,7 @@
   }
 
   // Pointer fallback so it's alive on desktop and before activation.
-  window.addEventListener("pointermove", onPointer, { passive: true });
+  // window.addEventListener("pointermove", onPointer, { passive: true });
 
   window.addEventListener("resize", buildGrid);
   window.addEventListener("orientationchange", () => setTimeout(buildGrid, 200));
