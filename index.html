@@ -151,6 +151,7 @@
     <label><input type="checkbox" id="predictCheck" checked /> Prediction</label>
     <label><input type="checkbox" id="accelCheck" checked /> Accel guard</label>
     <label><input type="checkbox" id="jerkCheck" checked /> Jerk guard</label>
+    <label><input type="checkbox" id="attackCheck" checked /> Attack/release</label>
     <label><input type="checkbox" id="smoothCheck" checked /> Smoothing</label>
     <label><input type="checkbox" id="debugCheck" /> Debug</label>
     <label id="densityRow">Density <input type="range" id="densitySlider" min="12" max="60" value="34" /></label>
@@ -184,6 +185,7 @@
   const predictCheck = document.getElementById("predictCheck");
   const accelCheck = document.getElementById("accelCheck");
   const jerkCheck = document.getElementById("jerkCheck");
+  const attackCheck = document.getElementById("attackCheck");
 
   // Smoothing: when off, snap to the target instead of easing toward it.
   // Prediction: when off, reproduce the pre-update behavior (ease toward the
@@ -191,14 +193,18 @@
   // Accel guard: when on, damp the prediction while linear acceleration is
   // high (e.g. shoving the phone) so jitter isn't amplified into flicker.
   // Jerk guard: same idea, but keyed off jerk (rate of change of acceleration).
+  // Attack/release: hold the guard damping with a fast attack and slow release,
+  // so a brief dip (e.g. jerk crossing zero mid-shove) doesn't un-clamp.
   let smoothing = true;
   let prediction = true;
   let accelGuard = true;
   let jerkGuard = true;
+  let attackRelease = true;
   smoothCheck.addEventListener("change", () => { smoothing = smoothCheck.checked; });
   predictCheck.addEventListener("change", () => { prediction = predictCheck.checked; });
   accelCheck.addEventListener("change", () => { accelGuard = accelCheck.checked; });
   jerkCheck.addEventListener("change", () => { jerkGuard = jerkCheck.checked; });
+  attackCheck.addEventListener("change", () => { attackRelease = attackCheck.checked; });
 
   // Debug overlay: when on, show a live readout of the internal signals that
   // drive the effect (accel magnitude, damping, angular velocity, vectors).
@@ -251,6 +257,10 @@
   // Jerk guard: same ramp keyed off |jerk| (rate of change of acceleration).
   const JERK_LOW = 10;           // below this (m/s^3) prediction is untouched
   const JERK_HIGH = 15;          // above this the prediction is fully damped
+
+  // Attack/release: damping snaps closed instantly but reopens over this many
+  // ms, bridging brief dips in the guard signal (e.g. jerk crossing zero).
+  const GUARD_RELEASE_MS = 250;
 
   // --- Dot grid ---------------------------------------------------------
   // Each dot also carries `target`: a random unit vector representing an
@@ -310,11 +320,13 @@
   let angAxis = [0, 0, 1];       // axis the vector is rotating about
   let lastFrameTime = 0;
   let accelMag = 0;              // smoothed linear-acceleration magnitude (m/s^2)
-  let jerkMag = 0;               // smoothed jerk = d(accelMag)/dt (m/s^3); drives the Jerk guard
+  let jerkMag = 0;               // smoothed jerk = d(accelMag)/dt (m/s^3); reference only
+  let absJerk = 0;               // |raw jerk| (rectified, UNsmoothed); drives the Jerk guard
   let snapMag = 0;               // smoothed snap = d(jerkMag)/dt (m/s^4); debug-only for now
   let prevAccelMag = 0;          // previous accel magnitude, for the jerk finite-difference
   let prevJerkMag = 0;           // previous jerk, for the snap finite-difference
   let prevMotionTime = 0;        // timestamp of the last devicemotion sample (ms)
+  let guardDamp = 1;             // attack/release-held damping actually applied to the prediction
 
   // Convert (alpha, beta, gamma) Euler angles (degrees, ZXY order per the
   // W3C DeviceOrientation spec) into a quaternion, then rotate [0,0,1].
@@ -395,12 +407,16 @@
     const m = Math.hypot(lin.x || 0, lin.y || 0, lin.z || 0);
     accelMag += (m - accelMag) * ACC_SMOOTH;
 
-    // Jerk: rate of change of the (smoothed) acceleration magnitude. Snap:
-    // rate of change of jerk. Both EMA-smoothed; snap is debug-only for now.
+    // Jerk: rate of change of the (smoothed) acceleration magnitude. We keep a
+    // smoothed signed jerk for reference, plus `absJerk` — the rectified raw
+    // jerk that drives the guard (rectify-then-smooth, but UNsmoothed for now).
+    // Snap: rate of change of jerk, EMA-smoothed; debug-only for now.
     if (prevMotionTime) {
       const dt = (now - prevMotionTime) / 1000;
       if (dt > 0) {
-        jerkMag += ((accelMag - prevAccelMag) / dt - jerkMag) * ACC_SMOOTH;
+        const rawJerk = (accelMag - prevAccelMag) / dt;
+        jerkMag += (rawJerk - jerkMag) * ACC_SMOOTH;
+        absJerk = Math.abs(rawJerk);
         snapMag += ((jerkMag - prevJerkMag) / dt - snapMag) * ACC_SMOOTH;
       }
     }
@@ -411,7 +427,7 @@
 
   // --- Debug overlay ----------------------------------------------------
   // Values computed inside frame() that the overlay needs to read back.
-  const dbg = { damp: 1, accDamp: 1, jerkDamp: 1, predAngle: 0, fps: 0 };
+  const dbg = { damp: 1, targetDamp: 1, accDamp: 1, jerkDamp: 1, predAngle: 0, fps: 0 };
 
   // Each metric: a live accessor, a bar range, and a formatter. `bip` draws a
   // bipolar bar growing out from the center; `ticks` marks thresholds (accel).
@@ -425,7 +441,12 @@
               { at: JERK_LOW, color: "#ff9b3b" }, { at: JERK_HIGH, color: "#ff5b5b" }],
       color: (v) => Math.abs(v) >= JERK_HIGH ? "#ff5b5b" : (Math.abs(v) >= JERK_LOW ? "#ff9b3b" : "#5b9bff"),
       fmt: (v) => v.toFixed(1) },
+    { label: "absJerk", get: () => absJerk,       min: 0, max: 50,
+      ticks: [{ at: JERK_LOW, color: "#ff9b3b" }, { at: JERK_HIGH, color: "#ff5b5b" }],
+      color: (v) => v >= JERK_HIGH ? "#ff5b5b" : (v >= JERK_LOW ? "#ff9b3b" : "#5b9bff"),
+      fmt: (v) => v.toFixed(1) },
     { label: "snap",    get: () => snapMag,       min: -500, max: 500, bip: true, fmt: (v) => v.toFixed(0) },
+    { label: "tgtDamp", get: () => dbg.targetDamp, min: 0, max: 1, fmt: (v) => v.toFixed(2) },
     { label: "damp",    get: () => dbg.damp,      min: 0, max: 1, fmt: (v) => v.toFixed(2) },
     { label: "angVel",  get: () => angSpeed,      min: 0, max: 6, fmt: (v) => v.toFixed(2) },
     { label: "predAng", get: () => dbg.predAngle, min: -MAX_LEAD_ANGLE, max: MAX_LEAD_ANGLE, bip: true, fmt: (v) => v.toFixed(3) },
@@ -522,16 +543,30 @@
     let accDamp = 1 - (accelMag - ACC_LOW) / (ACC_HIGH - ACC_LOW);
     if (accDamp < 0) accDamp = 0; else if (accDamp > 1) accDamp = 1;
 
-    // Jerk guard: same ramp keyed off the magnitude of the jerk.
-    const absJerk = jerkMag < 0 ? -jerkMag : jerkMag;
+    // Jerk guard: same ramp keyed off |jerk| (the rectified raw jerk).
     let jerkDamp = 1 - (absJerk - JERK_LOW) / (JERK_HIGH - JERK_LOW);
     if (jerkDamp < 0) jerkDamp = 0; else if (jerkDamp > 1) jerkDamp = 1;
 
-    // Effective damping = product of the enabled guards. (Ramps are always
+    // Instantaneous target = product of the enabled guards. (Ramps are always
     // computed so the debug overlay can show them; applied only when on.)
-    let damp = 1;
-    if (accelGuard) damp *= accDamp;
-    if (jerkGuard) damp *= jerkDamp;
+    let targetDamp = 1;
+    if (accelGuard) targetDamp *= accDamp;
+    if (jerkGuard) targetDamp *= jerkDamp;
+
+    // Attack/release: snap closed instantly when more damping is called for,
+    // but reopen slowly (over GUARD_RELEASE_MS) so a brief signal dip doesn't
+    // un-clamp the prediction mid-disturbance. When off, apply target directly.
+    if (attackRelease) {
+      if (targetDamp <= guardDamp) {
+        guardDamp = targetDamp; // attack
+      } else {
+        const k = 1 - Math.exp(-(frameDt * 1000) / GUARD_RELEASE_MS); // release
+        guardDamp += (targetDamp - guardDamp) * k;
+      }
+    } else {
+      guardDamp = targetDamp; // keep state in sync so toggling is seamless
+    }
+    const damp = guardDamp;
     predAngle *= damp;
 
     // Target the prediction when on; otherwise the raw reading (pre-update).
@@ -571,6 +606,7 @@
 
     if (debugOn) {
       dbg.damp = damp;
+      dbg.targetDamp = targetDamp;
       dbg.accDamp = accDamp;
       dbg.jerkDamp = jerkDamp;
       dbg.predAngle = predAngle;
