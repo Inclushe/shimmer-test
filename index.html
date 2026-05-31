@@ -16,7 +16,8 @@
   }
   canvas { display: block; width: 100vw; height: 100vh; }
 
-  /* Activation button (shown when the browser gates orientation sensors) */
+  /* Activation button — hidden by default; only shown if permission is denied
+     or a user gesture is required (see the permission flow in the script). */
   #enable {
     position: fixed;
     top: calc(env(safe-area-inset-top, 0px) + 16px);
@@ -30,10 +31,26 @@
     color: #fff; font-size: 14px; font-weight: 600; letter-spacing: 0.2px;
     cursor: pointer;
     box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    opacity: 0; pointer-events: none; /* hidden by default */
     transition: opacity .25s ease, transform .15s ease;
   }
   #enable:active { transform: scale(0.96); }
-  #enable.hidden { opacity: 0; pointer-events: none; }
+  #enable.show { opacity: 1; pointer-events: auto; }
+
+  /* "Open on your phone" message for devices with no usable motion sensor */
+  #desktopMsg {
+    position: fixed; inset: 0; z-index: 30;
+    display: flex; align-items: center; justify-content: center;
+    padding: 32px; text-align: center;
+    color: rgba(255,255,255,0.9);
+    font-size: 19px; font-weight: 600; line-height: 1.4;
+  }
+  #desktopMsg.hidden { display: none; }
+  #desktopMsg .dm-emoji { display: block; font-size: 44px; margin-bottom: 16px; }
+  #desktopMsg .dm-sub {
+    display: block; margin-top: 10px;
+    font-size: 14px; font-weight: 400; color: rgba(255,255,255,0.55);
+  }
 
   /* Toggle group */
   #toggles {
@@ -91,8 +108,8 @@
   #infoBtn:active { transform: scale(0.94); }
   #infoBtn svg { width: 22px; height: 22px; }
 
-  /* Info modal */
-  #infoModal {
+  /* Info modal (and the motion-fix modal, which shares its styling) */
+  #infoModal, #fixModal {
     position: fixed; inset: 0; z-index: 20;
     display: flex; align-items: center; justify-content: center;
     padding: 24px;
@@ -100,8 +117,8 @@
     backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
     transition: opacity .2s ease;
   }
-  #infoModal.hidden { opacity: 0; pointer-events: none; }
-  #infoCard {
+  #infoModal.hidden, #fixModal.hidden { opacity: 0; pointer-events: none; }
+  #infoCard, #fixCard {
     position: relative;
     max-width: 320px; width: 100%;
     padding: 24px 22px;
@@ -111,15 +128,32 @@
     color: #fff;
     box-shadow: 0 12px 40px rgba(0,0,0,0.5);
   }
-  #infoCard h2 { font-size: 17px; margin-bottom: 8px; }
-  #infoCard p { font-size: 14px; line-height: 1.5; color: rgba(255,255,255,0.8); }
-  #infoCard a { color: #7db4ff; }
-  #infoClose {
+  #fixCard { max-height: 80vh; overflow-y: auto; }
+  #infoCard h2, #fixCard h2 { font-size: 17px; margin-bottom: 8px; }
+  #infoCard p, #fixCard p { font-size: 14px; line-height: 1.5; color: rgba(255,255,255,0.8); }
+  #infoCard a, #fixCard a { color: #7db4ff; }
+  #infoClose, #fixClose {
     position: absolute; top: 8px; right: 12px;
     border: none; background: none; color: rgba(255,255,255,0.6);
     font-size: 26px; line-height: 1; cursor: pointer; padding: 4px;
   }
-  #infoClose:active { color: #fff; }
+  #infoClose:active, #fixClose:active { color: #fff; }
+  #fixCard p { margin-top: 10px; }
+  #fixCard b { color: #fff; font-weight: 600; }
+  #fixCard details { margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.12); padding-top: 12px; }
+  #fixCard summary { cursor: pointer; color: #7db4ff; font-size: 14px; font-weight: 600; }
+  #fixCard details p:first-of-type { margin-top: 10px; }
+
+  /* "Why? Fix it" link, shown under the Activate button only on denial */
+  #fixLink {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 62px);
+    right: calc(env(safe-area-inset-right, 0px) + 18px);
+    z-index: 10;
+    color: #7db4ff; font-size: 13px; font-weight: 600;
+    text-decoration: underline; cursor: pointer;
+  }
+  #fixLink.hidden { display: none; }
 
   /* Debug overlay (top-left), toggled by the Debug checkbox */
   #debug {
@@ -160,7 +194,15 @@
 </head>
 <body>
   <canvas id="c"></canvas>
-  <button id="enable" class="hidden">Tap to activate</button>
+  <button id="enable">Tap to activate</button>
+  <a id="fixLink" class="hidden" role="button" tabindex="0">Why? Fix it &rarr;</a>
+  <div id="desktopMsg" class="hidden">
+    <div>
+      <span class="dm-emoji">📱</span>
+      Open this on your phone
+      <span class="dm-sub">This effect uses your device's motion &amp; orientation sensors.</span>
+    </div>
+  </div>
   <div id="toggles">
     <label><input type="checkbox" id="predictCheck" checked /> Prediction</label>
     <label><input type="checkbox" id="accelCheck" checked /> Accel guard</label>
@@ -169,7 +211,7 @@
     <div class="thresh"><span>low</span><input type="number" id="sjerkLowInput" step="1" /><span>high</span><input type="number" id="sjerkHighInput" step="1" /></div>
     <label><input type="checkbox" id="ajerkCheck" checked /> Absolute jerk guard</label>
     <div class="thresh"><span>low</span><input type="number" id="ajerkLowInput" step="1" /><span>high</span><input type="number" id="ajerkHighInput" step="1" /></div>
-    <label><input type="checkbox" id="attackCheck" /> Attack/release</label>
+    <label><input type="checkbox" id="attackCheck" checked /> Attack/release</label>
     <div class="thresh"><span>release ms</span><input type="number" id="releaseInput" step="50" /></div>
     <label><input type="checkbox" id="smoothCheck" checked /> Smoothing</label>
     <div class="thresh"><span>factor</span><input type="number" id="smoothInput" step="0.05" min="0" max="1" /></div>
@@ -194,6 +236,24 @@
     </div>
   </div>
 
+  <div id="fixModal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="fixTitle">
+    <div id="fixCard">
+      <button id="fixClose" aria-label="Close">&times;</button>
+      <h2 id="fixTitle">Re-enable motion access</h2>
+      <p>You denied motion access, and iOS won't ask again until this site's saved data is cleared. Pick whichever is easiest, then reload and tap <b>Activate</b> again.</p>
+      <p><b>Easiest:</b> open this page in another browser, or in a Private tab.</p>
+      <details>
+        <summary>Other ways</summary>
+        <p><b>Safari only</b> &mdash; clear this site's data:</p>
+        <p><b>Quick</b> &mdash; clears the last hour of history:<br>
+          Settings &rarr; search <b>Clear History and Website Data</b> &rarr; <b>Clear History</b> &rarr; choose <b>Last hour</b>.</p>
+        <p><b>Precise</b> &mdash; removes only this site:<br>
+          Settings &rarr; <b>Apps</b> &rarr; <b>Safari</b> &rarr; <b>Advanced</b> &rarr; <b>Website Data</b> &rarr; search <b>for this website</b> &rarr; tap the <b>Search</b> button or hide the keyboard to reveal <b>Edit</b> &rarr; <b>Edit</b> &rarr; tap the <b>&minus;</b> next to it &rarr; <b>Delete</b>.</p>
+        <p><b>Other browsers</b> &mdash; look for an option to clear browsing history, or reinstall the browser app.</p>
+      </details>
+    </div>
+  </div>
+
 <script>
 (() => {
   "use strict";
@@ -201,6 +261,7 @@
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
   const enableBtn = document.getElementById("enable");
+  const desktopMsg = document.getElementById("desktopMsg");
   const smoothCheck = document.getElementById("smoothCheck");
   const predictCheck = document.getElementById("predictCheck");
   const accelCheck = document.getElementById("accelCheck");
@@ -224,7 +285,7 @@
   let accelGuard = true;
   let signedJerkGuard = false;
   let absJerkGuard = true;
-  let attackRelease = false;
+  let attackRelease = true;
   smoothCheck.addEventListener("change", () => { smoothing = smoothCheck.checked; });
   predictCheck.addEventListener("change", () => { prediction = predictCheck.checked; });
   accelCheck.addEventListener("change", () => { accelGuard = accelCheck.checked; });
@@ -259,6 +320,13 @@
   document.getElementById("infoBtn").addEventListener("click", () => infoModal.classList.remove("hidden"));
   document.getElementById("infoClose").addEventListener("click", () => infoModal.classList.add("hidden"));
   infoModal.addEventListener("click", (e) => { if (e.target === infoModal) infoModal.classList.add("hidden"); });
+
+  // Motion-fix modal (how to re-trigger the iOS permission prompt after denial).
+  const fixModal = document.getElementById("fixModal");
+  const fixLink = document.getElementById("fixLink");
+  fixLink.addEventListener("click", () => fixModal.classList.remove("hidden"));
+  document.getElementById("fixClose").addEventListener("click", () => fixModal.classList.add("hidden"));
+  fixModal.addEventListener("click", (e) => { if (e.target === fixModal) fixModal.classList.add("hidden"); });
 
   // --- Tunables ---------------------------------------------------------
   let dotRadius = 1;             // dot radius in px; set by the size slider
@@ -378,6 +446,7 @@
   let prevAngSpeed = 0;          // previous frame's speed, for acceleration
   let angAxis = [0, 0, 1];       // axis the vector is rotating about
   let lastFrameTime = 0;
+  let hasData = false;           // true once the first orientation reading lands
   let accelMag = 0;              // smoothed linear-acceleration magnitude (m/s^2)
   let jerkMag = 0;               // smoothed jerk = d(accelMag)/dt (m/s^3); reference only
   let absJerk = 0;               // EMA of |raw jerk| (rectify-then-smooth envelope); drives the Jerk guard
@@ -448,6 +517,10 @@
     prevMeas = newVec;
     prevMeasTime = now;
     measVec = newVec;
+    if (!hasData) {
+      hasData = true;
+      desktopMsg.classList.add("hidden"); // real sensor data → not a desktop
+    }
   }
 
   function onOrientation(e) {
@@ -678,7 +751,9 @@
     ctx.fillStyle = "#000000";
     ctx.fillRect(0, 0, W, H);
 
-    for (let k = 0; k < dots.length; k++) {
+    // Keep the canvas blank until the first orientation reading arrives, so the
+    // dots don't flash at the default orientation on load.
+    for (let k = 0; hasData && k < dots.length; k++) {
       const d = dots[k];
       const t = d.target;
       // Angular distance between current orientation and this dot's target.
@@ -733,34 +808,61 @@
     window.addEventListener("devicemotion", onMotion, { passive: true });
   }
 
-  function requestAndStart() {
-    // DeviceMotion is gated separately from DeviceOrientation on iOS; request
-    // both from this single tap. Orientation drives the effect, so it decides
-    // whether activation succeeded; motion only feeds the Accel guard.
+  // Request both permissions together (DeviceMotion is gated separately from
+  // DeviceOrientation on iOS). Orientation drives the effect, so it decides
+  // whether activation succeeded; motion only feeds the Accel/Jerk guards.
+  function requestPerms() {
     const motionReq = (typeof DeviceMotionEvent !== "undefined" &&
         typeof DeviceMotionEvent.requestPermission === "function")
       ? DeviceMotionEvent.requestPermission().catch(() => "denied")
       : Promise.resolve("granted");
+    return Promise.all([DeviceOrientationEvent.requestPermission(), motionReq]);
+  }
 
-    Promise.all([DeviceOrientationEvent.requestPermission(), motionReq])
+  // Triggered by tapping the button (a real user gesture) when one is required.
+  function requestAndStart() {
+    requestPerms()
       .then(([orientState]) => {
         if (orientState === "granted") {
           startListening();
-          enableBtn.classList.add("hidden");
+          enableBtn.classList.remove("show");
+          fixLink.classList.add("hidden");
         } else {
+          // Denied: iOS won't prompt again until site data is cleared. Surface
+          // the fix instructions next to the button.
           enableBtn.textContent = "Motion blocked — retry";
+          fixLink.classList.remove("hidden");
         }
       })
       .catch(() => { enableBtn.textContent = "Tap to activate"; });
   }
 
   if (needsPermission) {
-    enableBtn.classList.remove("hidden");
     enableBtn.addEventListener("click", requestAndStart);
+    // Probe without a gesture: browsers that auto-approve (e.g. Chrome on
+    // Android) resolve "granted" and the button stays hidden; iOS rejects
+    // because it needs a user activation, so we reveal the button to retry.
+    requestPerms()
+      .then(([orientState]) => {
+        if (orientState === "granted") startListening();
+        else enableBtn.classList.add("show");
+      })
+      .catch(() => enableBtn.classList.add("show"));
   } else if (typeof DeviceOrientationEvent !== "undefined") {
     // Browsers that don't gate the sensor: just listen.
     startListening();
   }
+
+  // Give the sensors a moment to deliver a first reading. If none arrives and
+  // no permission button is waiting to be tapped, this device has no usable
+  // motion/orientation sensor (desktop/laptop) — tell them to use a phone.
+  // (Chrome on Android takes the no-button path too, but its sensors DO fire,
+  // so hasData flips true and this never triggers.)
+  setTimeout(() => {
+    if (!hasData && !enableBtn.classList.contains("show")) {
+      desktopMsg.classList.remove("hidden");
+    }
+  }, 200);
 
   // Pointer fallback so it's alive on desktop and before activation.
   // window.addEventListener("pointermove", onPointer, { passive: true });
