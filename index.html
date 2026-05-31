@@ -75,6 +75,34 @@
   #densityRow, #sizeRow { gap: 10px; }
   #densityRow input[type="range"], #sizeRow input[type="range"] { width: 110px; accent-color: #fff; cursor: pointer; }
 
+  /* Disabled toggles in Raw Sensor mode */
+  #toggles label.disabled { opacity: 0.4; cursor: not-allowed; }
+  #toggles label.disabled input { cursor: not-allowed; }
+  .thresh.disabled { opacity: 0.4; }
+  .thresh.disabled input { cursor: not-allowed; }
+
+  /* Segmented "Raw Sensor / Predicted" pill toggle */
+  #modeToggle {
+    display: flex; align-items: stretch;
+    padding: 3px;
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 999px;
+    background: rgba(20,22,30,0.6);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  #modeToggle .seg-opt {
+    flex: 1;
+    padding: 6px 14px;
+    border: none; border-radius: 999px;
+    background: transparent;
+    color: rgba(255,255,255,0.6);
+    font-size: 13px; font-weight: 600; letter-spacing: 0.2px;
+    cursor: pointer; white-space: nowrap;
+    transition: background .15s ease, color .15s ease;
+  }
+  #modeToggle .seg-opt.active { background: #fff; color: #14161e; }
+
   /* Per-guard threshold editors, revealed only in debug mode */
   .thresh { display: none; gap: 8px; margin: -2px 0 2px 14px; align-items: center; }
   body.debug .thresh { display: flex; }
@@ -204,7 +232,10 @@
     </div>
   </div>
   <div id="toggles">
-    <label><input type="checkbox" id="predictCheck" checked /> Prediction</label>
+    <div id="modeToggle" role="group" aria-label="Orientation mode">
+      <button type="button" class="seg-opt" data-mode="raw">Raw Sensor</button>
+      <button type="button" class="seg-opt active" data-mode="predicted">Predicted</button>
+    </div>
     <label><input type="checkbox" id="accelCheck" checked /> Accel guard</label>
     <div class="thresh"><span>low</span><input type="number" id="accLowInput" step="0.5" /><span>high</span><input type="number" id="accHighInput" step="0.5" /></div>
     <label><input type="checkbox" id="sjerkCheck" /> Jerk guard</label>
@@ -263,15 +294,15 @@
   const enableBtn = document.getElementById("enable");
   const desktopMsg = document.getElementById("desktopMsg");
   const smoothCheck = document.getElementById("smoothCheck");
-  const predictCheck = document.getElementById("predictCheck");
   const accelCheck = document.getElementById("accelCheck");
   const sjerkCheck = document.getElementById("sjerkCheck");
   const ajerkCheck = document.getElementById("ajerkCheck");
   const attackCheck = document.getElementById("attackCheck");
 
   // Smoothing: when off, snap to the target instead of easing toward it.
-  // Prediction: when off, reproduce the pre-update behavior (ease toward the
-  // raw reading with no extrapolation) for an A/B comparison.
+  // Orientation mode (see the segmented toggle below): "Predicted" extrapolates
+  // the reading forward; "Raw Sensor" uses the reading as-is for an A/B
+  // comparison and disables/forces-off every prediction-related option.
   // Accel guard: when on, damp the prediction while linear acceleration is
   // high (e.g. shoving the phone) so jitter isn't amplified into flicker.
   // Signed jerk guard: keyed off |smoothed signed jerk| (the original signal,
@@ -287,11 +318,42 @@
   let absJerkGuard = true;
   let attackRelease = true;
   smoothCheck.addEventListener("change", () => { smoothing = smoothCheck.checked; });
-  predictCheck.addEventListener("change", () => { prediction = predictCheck.checked; });
   accelCheck.addEventListener("change", () => { accelGuard = accelCheck.checked; });
   sjerkCheck.addEventListener("change", () => { signedJerkGuard = sjerkCheck.checked; });
   ajerkCheck.addEventListener("change", () => { absJerkGuard = ajerkCheck.checked; });
   attackCheck.addEventListener("change", () => { attackRelease = attackCheck.checked; });
+
+  // Orientation mode: segmented "Raw Sensor" / "Predicted" toggle. In Raw
+  // Sensor mode the prediction is off and every prediction-related option is
+  // disabled and forced false; each checkbox keeps its checked state as the
+  // remembered value, restored when switching back to Predicted.
+  const modeToggle = document.getElementById("modeToggle");
+  const modeOpts = modeToggle.querySelectorAll(".seg-opt");
+  // Each entry: the checkbox, its sibling threshold row, and a boolean setter.
+  const guardedControls = [
+    { box: accelCheck,  set: (v) => { accelGuard = v; } },
+    { box: sjerkCheck,  set: (v) => { signedJerkGuard = v; } },
+    { box: ajerkCheck,  set: (v) => { absJerkGuard = v; } },
+    { box: attackCheck, set: (v) => { attackRelease = v; } },
+    { box: smoothCheck, set: (v) => { smoothing = v; } },
+  ];
+  function setMode(predicted) {
+    prediction = predicted;
+    for (const c of guardedControls) {
+      const label = c.box.closest("label");
+      const thresh = label.nextElementSibling; // the matching .thresh row
+      c.box.disabled = !predicted;
+      label.classList.toggle("disabled", !predicted);
+      if (thresh && thresh.classList.contains("thresh")) {
+        thresh.classList.toggle("disabled", !predicted);
+        thresh.querySelectorAll("input").forEach((el) => { el.disabled = !predicted; });
+      }
+      // Force false in raw mode; restore the remembered checkbox value otherwise.
+      c.set(predicted ? c.box.checked : false);
+    }
+    modeOpts.forEach((o) => o.classList.toggle("active", (o.dataset.mode === "predicted") === predicted));
+  }
+  modeOpts.forEach((o) => o.addEventListener("click", () => setMode(o.dataset.mode === "predicted")));
 
   // Debug overlay: when on, show a live readout of the internal signals that
   // drive the effect (accel magnitude, damping, angular velocity, vectors).
