@@ -749,6 +749,7 @@
         const decel = Math.max(0, (prevSpeed - angSpeed) / dt);
         angDecel += (decel - angDecel) * (debugOn ? decelSmoothV : DECEL_SMOOTH);
         if (al > 1e-6) angAxis = [ax / al, ay / al, az / al];
+        dbg.oriHz += (1 / dt - dbg.oriHz) * 0.1; // DeviceOrientation sample rate (debug)
       }
     }
     prevMeas = newVec;
@@ -784,6 +785,7 @@
         const rawJerk = (accelMag - prevAccelMag) / dt;
         jerkMag += (rawJerk - jerkMag) * (debugOn ? sjerkSmoothV : JERK_SMOOTH);
         absJerk += (Math.abs(rawJerk) - absJerk) * (debugOn ? ajerkSmoothV : ABSJERK_SMOOTH);
+        dbg.motHz += (1 / dt - dbg.motHz) * 0.1; // DeviceMotion sample rate (debug)
       }
     }
     prevAccelMag = accelMag;
@@ -792,7 +794,7 @@
 
   // --- Debug overlay ----------------------------------------------------
   // Values computed inside frame() that the overlay needs to read back.
-  const dbg = { damp: 1, targetDamp: 1, accDamp: 1, sJerkDamp: 1, aJerkDamp: 1, decelDamp: 1, drive: 1, predAngle: 0, fps: 0 };
+  const dbg = { damp: 1, targetDamp: 1, accDamp: 1, sJerkDamp: 1, aJerkDamp: 1, decelDamp: 1, drive: 1, predAngle: 0, fps: 0, oriHz: 0, motHz: 0 };
 
   // Each metric: a live accessor, a bar range, and a formatter. `bip` draws a
   // bipolar bar growing out from the center; `ticks` marks thresholds (accel).
@@ -826,6 +828,8 @@
     { label: "pred y",  get: () => cur[1],        min: -1, max: 1, bip: true, fmt: (v) => v.toFixed(2) },
     { label: "pred z",  get: () => cur[2],        min: -1, max: 1, bip: true, fmt: (v) => v.toFixed(2) },
     { label: "fps",     get: () => dbg.fps,       min: 0, max: 120, fmt: (v) => v.toFixed(0) },
+    { label: "ori fps", get: () => dbg.oriHz,     min: 0, max: 120, fmt: (v) => v.toFixed(0) },
+    { label: "mot fps", get: () => dbg.motHz,     min: 0, max: 120, fmt: (v) => v.toFixed(0) },
   ];
 
   // A tick's background: a solid line, or a dashed one for the orange LOW
