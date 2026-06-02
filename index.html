@@ -489,7 +489,7 @@
   // Damp glide: ease the combined guard damping toward its target with separate
   // time constants for engaging (toward more damping / 0) and releasing (toward 1).
   const GLIDE_ATTACK_MS = 120;   // glide toward more damping
-  const GLIDE_RELEASE_MS = 250;  // glide back toward no damping
+  const GLIDE_RELEASE_MS = 120;  // glide back toward no damping
 
   // Decel guard (idea 1): damp the prediction while angular speed is dropping
   // fast (end of an abrupt motion), so the lagging predAngle can't overshoot.
