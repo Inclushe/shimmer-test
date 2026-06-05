@@ -260,7 +260,7 @@
       <button type="button" class="seg-opt active" data-mode="predicted">Predicted</button>
     </div>
     <div class="opt">
-      <label><input type="checkbox" id="accelCheck" checked /> Accel guard</label>
+      <label><input type="checkbox" id="accelCheck" checked /> Linear accel guard</label>
       <div class="thresh">
         <div class="field"><span>low</span><input type="number" id="accLowInput" step="0.5" /></div>
         <div class="field"><span>high</span><input type="number" id="accHighInput" step="0.5" /></div>
@@ -291,7 +291,7 @@
       </div>
     </div>
     <div class="opt">
-      <label><input type="checkbox" id="decelCheck" checked /> Decel guard</label>
+      <label><input type="checkbox" id="decelCheck" checked /> Angular decel guard</label>
       <div class="thresh">
         <div class="field"><span>low</span><input type="number" id="decelLowInput" step="1" /></div>
         <div class="field"><span>high</span><input type="number" id="decelHighInput" step="1" /></div>
@@ -393,12 +393,16 @@
   // Orientation mode (see the segmented toggle below): "Predicted" extrapolates
   // the reading forward; "Raw Sensor" uses the reading as-is for an A/B
   // comparison and disables/forces-off every prediction-related option.
-  // Accel guard: when on, damp the prediction while linear acceleration is
+  // NOTE on the guards: "Linear accel"/"Jerk"/"AbsJerk" all key off LINEAR
+  // (translational) motion from the DeviceMotion accelerometer; "Angular decel"
+  // keys off ROTATIONAL motion from DeviceOrientation. Same word "accel" but two
+  // unrelated quantities/sensors.
+  // Linear accel guard: when on, damp the prediction while linear acceleration is
   // high (e.g. shoving the phone) so jitter isn't amplified into flicker.
-  // Signed jerk guard: keyed off |smoothed signed jerk| (the original signal,
-  // which dips through zero on a sign change). Off by default.
-  // AbsJerk guard: keyed off the rectify-then-smooth envelope (stays elevated
-  // across a sign change). On by default.
+  // Signed jerk guard: keyed off |smoothed signed linear jerk| (the original
+  // signal, which dips through zero on a sign change). Off by default.
+  // AbsJerk guard: keyed off the rectify-then-smooth linear-jerk envelope (stays
+  // elevated across a sign change). On by default.
   // Damp glide: ease the combined guard damping toward its target in both
   // directions (over separate attack/release times) instead of snapping, so a
   // guard engaging abruptly doesn't slam `damp` and cause its own flicker.
@@ -507,13 +511,16 @@
   const OLD_SMOOTH = 0.15;       // pre-update easing (used when prediction off)
   const STALE_MS = 120;          // drop velocity if readings stop coming
 
-  // Accel guard: damp the prediction as linear acceleration (DeviceMotion)
-  // rises, so a fast translation can't amplify sensor jitter into flicker.
+  // Linear accel guard: damp the prediction as LINEAR acceleration (m/s^2, from
+  // the DeviceMotion accelerometer — NOT rotation) rises, so a fast translation
+  // (shoving the phone) can't amplify sensor jitter into flicker. Distinct from
+  // the Angular decel guard below, which keys off rotational deceleration.
   const ACC_LOW = 3;             // below this (m/s^2) prediction is untouched
   const ACC_HIGH = 4;            // above this the prediction is fully damped
   const ACC_SMOOTH = 0.4;        // EMA factor for the accel magnitude
 
-  // Signed jerk guard: ramp keyed off |smoothed signed jerk|.
+  // Signed jerk guard: ramp keyed off |smoothed signed LINEAR jerk| (d/dt of the
+  // DeviceMotion linear accel — still translational, not rotational).
   const JERK_LOW = 10;           // below this (m/s^3) prediction is untouched
   const JERK_HIGH = 15;          // above this the prediction is fully damped
   const JERK_SMOOTH = 0.4;       // EMA factor for the signed jerk
@@ -529,8 +536,10 @@
   const GLIDE_ATTACK_MS = 120;   // glide toward more damping
   const GLIDE_RELEASE_MS = 120;  // glide back toward no damping
 
-  // Decel guard (idea 1): damp the prediction while angular speed is dropping
-  // fast (end of an abrupt motion), so the lagging predAngle can't overshoot.
+  // Angular decel guard (idea 1): damp the prediction while ANGULAR speed (the
+  // orientation's rotation rate, from DeviceOrientation — NOT the accelerometer)
+  // is dropping fast, i.e. a rotation ending abruptly, so the lagging predAngle
+  // can't overshoot. Different quantity/sensor than the Linear accel guard above.
   const DECEL_LOW = 20;          // below this (rad/s^2) prediction is untouched
   const DECEL_HIGH = 30;         // above this the prediction is fully damped
   const DECEL_SMOOTH = 0.2;      // EMA factor for the angular-deceleration signal
@@ -702,15 +711,19 @@
   // Angular-velocity tracking, used to extrapolate `measVec` forward.
   let prevMeas = null;           // previous measured vector
   let prevMeasTime = 0;          // timestamp of that measurement (ms)
-  let angSpeed = 0;              // smoothed angular speed (rad/s)
-  let angDecel = 0;              // smoothed angular deceleration (rad/s^2), event-driven
+  // --- ANGULAR / ROTATIONAL motion, derived from DeviceOrientation (NOT the
+  // accelerometer): how the orientation vector is turning. ---
+  let angSpeed = 0;              // smoothed angular speed (rad/s) of the orientation vector
+  let angDecel = 0;              // smoothed angular deceleration (rad/s^2): rectified -d(angSpeed)/dt
   let angAxis = [0, 0, 1];       // axis the vector is rotating about
   let lastFrameTime = 0;
   let hasData = false;           // true once the first orientation reading lands
-  let accelMag = 0;              // smoothed linear-acceleration magnitude (m/s^2)
-  let jerkMag = 0;               // smoothed jerk = d(accelMag)/dt (m/s^3); reference only
-  let absJerk = 0;               // EMA of |raw jerk| (rectify-then-smooth envelope); drives the Jerk guard
-  let prevAccelMag = 0;          // previous accel magnitude, for the jerk finite-difference
+  // --- LINEAR / TRANSLATIONAL motion, derived from DeviceMotion's accelerometer
+  // (NOT orientation): how the phone is being moved/shoved through space. ---
+  let linAccelMag = 0;           // smoothed linear-acceleration magnitude (m/s^2), from e.acceleration
+  let jerkMag = 0;               // smoothed linear jerk = d(linAccelMag)/dt (m/s^3); reference only
+  let absJerk = 0;               // EMA of |raw linear jerk| (rectify-then-smooth envelope); drives the jerk guard
+  let prevLinAccelMag = 0;       // previous linear-accel magnitude, for the jerk finite-difference
   let prevMotionTime = 0;        // timestamp of the last devicemotion sample (ms)
   let guardDamp = 1;             // attack/release-held damping actually applied to the prediction
 
@@ -773,7 +786,7 @@
         const prevSpeed = angSpeed;
         angSpeed += (instSpeed - angSpeed) * VEL_SMOOTH;
         // Angular deceleration (rad/s^2), rectified to the slowing-down part
-        // only and EMA-smoothed; drives the Decel guard (idea 1).
+        // only and EMA-smoothed; drives the Angular decel guard + Dynamic speed.
         const decel = Math.max(0, (prevSpeed - angSpeed) / dt);
         angDecel += (decel - angDecel) * (debugOn ? decelSmoothV : DECEL_SMOOTH);
         if (al > 1e-6) angAxis = [ax / al, ay / al, az / al];
@@ -794,14 +807,16 @@
     ingestVector(orientationToVector(e.alpha, e.beta, e.gamma));
   }
 
-  // Track the magnitude of linear acceleration (gravity excluded). Used by the
-  // Accel guard to damp the prediction while the phone is being moved fast.
+  // Track the magnitude of LINEAR acceleration (gravity excluded) from the
+  // accelerometer. Feeds the Linear accel + jerk guards. This is translational
+  // motion (moving the phone through space), distinct from the angular/rotational
+  // signals (angSpeed/angDecel) derived from DeviceOrientation.
   function onMotion(e) {
     const lin = e.acceleration;
     if (!lin) return; // device either reports `acceleration` or it doesn't
     const now = performance.now();
     const m = Math.hypot(lin.x || 0, lin.y || 0, lin.z || 0);
-    accelMag += (m - accelMag) * (debugOn ? accSmoothV : ACC_SMOOTH);
+    linAccelMag += (m - linAccelMag) * (debugOn ? accSmoothV : ACC_SMOOTH);
 
     // Jerk: rate of change of the (smoothed) acceleration magnitude. We keep a
     // smoothed signed jerk for reference, plus `absJerk` — the rectify-then-
@@ -810,13 +825,13 @@
     if (prevMotionTime) {
       const dt = (now - prevMotionTime) / 1000;
       if (dt > 0) {
-        const rawJerk = (accelMag - prevAccelMag) / dt;
+        const rawJerk = (linAccelMag - prevLinAccelMag) / dt;
         jerkMag += (rawJerk - jerkMag) * (debugOn ? sjerkSmoothV : JERK_SMOOTH);
         absJerk += (Math.abs(rawJerk) - absJerk) * (debugOn ? ajerkSmoothV : ABSJERK_SMOOTH);
         dbg.motHz += (1 / dt - dbg.motHz) * 0.1; // DeviceMotion sample rate (debug)
       }
     }
-    prevAccelMag = accelMag;
+    prevLinAccelMag = linAccelMag;
     prevMotionTime = now;
   }
 
@@ -827,7 +842,7 @@
   // Each metric: a live accessor, a bar range, and a formatter. `bip` draws a
   // bipolar bar growing out from the center; `ticks` marks thresholds (accel).
   const debugMetrics = [
-    { label: "accel",   get: () => accelMag,      min: 0, max: 8, enabled: () => accelGuard,
+    { label: "lin acc", get: () => linAccelMag,    min: 0, max: 8, enabled: () => accelGuard,
       ticks: [{ at: () => accLowV, color: "#ff9b3b", dashed: true }, { at: () => accHighV, color: "#ff5b5b" }],
       color: (v) => v >= accHighV ? "#ff5b5b" : (v >= accLowV ? "#ff9b3b" : "#5b9bff"),
       fmt: (v) => v.toFixed(2) },
@@ -840,7 +855,9 @@
       ticks: [{ at: () => ajerkLowV, color: "#ff9b3b", dashed: true }, { at: () => ajerkHighV, color: "#ff5b5b" }],
       color: (v) => v >= ajerkHighV ? "#ff5b5b" : (v >= ajerkLowV ? "#ff9b3b" : "#5b9bff"),
       fmt: (v) => v.toFixed(1) },
-    { label: "decel",   get: () => angDecel,      min: 0, max: 40, enabled: () => decelGuard,
+    // Angular deceleration (rad/s^2, from DeviceOrientation). Drives the Angular
+    // decel guard AND Dynamic speed, so it reads active when either is on.
+    { label: "ang dec", get: () => angDecel,      min: 0, max: 40, enabled: () => decelGuard || dynSpeed,
       ticks: [{ at: () => decelLowV, color: "#ff9b3b", dashed: true }, { at: () => decelHighV, color: "#ff5b5b" }],
       color: (v) => v >= decelHighV ? "#ff5b5b" : (v >= decelLowV ? "#ff9b3b" : "#5b9bff"),
       fmt: (v) => v.toFixed(1) },
@@ -977,12 +994,12 @@
     if (predAngle > MAX_LEAD_ANGLE) predAngle = MAX_LEAD_ANGLE;
     else if (predAngle < -MAX_LEAD_ANGLE) predAngle = -MAX_LEAD_ANGLE;
 
-    // Accel guard: as linear acceleration rises from ACC_LOW to ACC_HIGH, ramp
+    // Linear accel guard: as LINEAR acceleration (DeviceMotion) rises from ACC_LOW to ACC_HIGH, ramp
     // the prediction down to zero so a fast shove can't amplify jitter.
     // (In debug mode the band is taken from the live editors, else the constants.)
     const accLow = debugOn ? accLowV : ACC_LOW;
     const accHigh = debugOn ? accHighV : ACC_HIGH;
-    let accDamp = 1 - (accelMag - accLow) / (accHigh - accLow);
+    let accDamp = 1 - (linAccelMag - accLow) / (accHigh - accLow);
     if (accDamp < 0) accDamp = 0; else if (accDamp > 1) accDamp = 1;
 
     // Signed jerk guard: ramp keyed off |smoothed signed jerk| (dips on a sign change).
@@ -998,8 +1015,9 @@
     let aJerkDamp = 1 - (absJerk - ajerkLow) / (ajerkHigh - ajerkLow);
     if (aJerkDamp < 0) aJerkDamp = 0; else if (aJerkDamp > 1) aJerkDamp = 1;
 
-    // Decel guard (idea 1): ramp keyed off angular deceleration, damping the
-    // prediction as a motion ends abruptly so the lagging lead can't overshoot.
+    // Angular decel guard (idea 1): ramp keyed off ANGULAR deceleration (rotation
+    // rate slowing, from DeviceOrientation), damping the prediction as a rotation
+    // ends abruptly so the lagging lead can't overshoot.
     const decLow = debugOn ? decelLowV : DECEL_LOW;
     const decHigh = debugOn ? decelHighV : DECEL_HIGH;
     let decelDamp = 1 - (angDecel - decLow) / (decHigh - decLow);
@@ -1149,7 +1167,7 @@
 
   // Request both permissions together (DeviceMotion is gated separately from
   // DeviceOrientation on iOS). Orientation drives the effect, so it decides
-  // whether activation succeeded; motion only feeds the Accel/Jerk guards.
+  // whether activation succeeded; motion only feeds the Linear accel/jerk guards.
   function requestPerms() {
     const motionReq = (typeof DeviceMotionEvent !== "undefined" &&
         typeof DeviceMotionEvent.requestPermission === "function")
