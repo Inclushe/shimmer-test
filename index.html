@@ -39,7 +39,7 @@
 
   /* "Open on your phone" message for devices with no usable motion sensor */
   #desktopMsg {
-    position: fixed; inset: 0; z-index: 30;
+    position: fixed; inset: 0;
     display: flex; align-items: center; justify-content: center;
     padding: 32px; text-align: left;
     color: rgba(255,255,255,0.9);
@@ -127,7 +127,7 @@
     background: rgba(20,22,30,0.6); color: #fff;
     font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
-  .thresh.guard input[type="number"] { width: 3ch; }
+  .thresh.guard input[type="number"] { width: 5ch; }
   .thresh .break { flex-basis: 100%; height: 0; }
   /* Glide on/off, a pill toggle living at the right of a guard's main label.
      Styled like the inertial-settle presets; revealed only in debug mode. */
