@@ -127,6 +127,15 @@
     background: rgba(20,22,30,0.6); color: #fff;
     font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
+  .thresh.guard input[type="number"] { width: 3ch; }
+  .thresh .break { flex-basis: 100%; height: 0; }
+  .thresh .glide-tog {
+    display: flex; align-items: center; gap: 3px; align-self: center;
+    font-size: 9px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase;
+    color: rgba(255,255,255,0.55);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .thresh .glide-tog input { margin: 0; }
 
   /* Preset buttons for the inertial-settle inputs (shown whether or not debug is on) */
   .presets { display: flex; gap: 6px; margin: 6px 0 0 14px; flex-wrap: wrap; }
@@ -269,49 +278,57 @@
     </div>
     <div class="opt">
       <label><input type="checkbox" id="accelCheck" checked /> Linear accel guard</label>
-      <div class="thresh">
+      <div class="thresh guard">
         <div class="field"><span>low</span><input type="number" id="accLowInput" step="0.5" /></div>
         <div class="field"><span>high</span><input type="number" id="accHighInput" step="0.5" /></div>
         <div class="field"><span>smooth</span><input type="number" id="accSmoothInput" step="0.05" min="0" max="1" /></div>
+        <label class="glide-tog"><input type="checkbox" id="accGlideCheck" checked />glide</label>
+        <div class="field"><span>atk ms</span><input type="number" id="accAtkInput" step="50" /></div>
+        <div class="field"><span>rel ms</span><input type="number" id="accRelInput" step="50" /></div>
       </div>
     </div>
     <div class="opt">
       <label><input type="checkbox" id="sjerkCheck" /> Jerk guard</label>
-      <div class="thresh">
+      <div class="thresh guard">
         <div class="field"><span>low</span><input type="number" id="sjerkLowInput" step="1" /></div>
         <div class="field"><span>high</span><input type="number" id="sjerkHighInput" step="1" /></div>
         <div class="field"><span>smooth</span><input type="number" id="sjerkSmoothInput" step="0.05" min="0" max="1" /></div>
+        <label class="glide-tog"><input type="checkbox" id="sjerkGlideCheck" checked />glide</label>
+        <div class="field"><span>atk ms</span><input type="number" id="sjerkAtkInput" step="50" /></div>
+        <div class="field"><span>rel ms</span><input type="number" id="sjerkRelInput" step="50" /></div>
       </div>
     </div>
     <div class="opt">
       <label><input type="checkbox" id="ajerkCheck" checked /> Absolute jerk guard</label>
-      <div class="thresh">
+      <div class="thresh guard">
         <div class="field"><span>low</span><input type="number" id="ajerkLowInput" step="1" /></div>
         <div class="field"><span>high</span><input type="number" id="ajerkHighInput" step="1" /></div>
         <div class="field"><span>smooth</span><input type="number" id="ajerkSmoothInput" step="0.05" min="0" max="1" /></div>
-      </div>
-    </div>
-    <div class="opt">
-      <label><input type="checkbox" id="glideCheck" checked /> Damp glide</label>
-      <div class="thresh">
-        <div class="field"><span>attack ms</span><input type="number" id="glideAttackInput" step="50" /></div>
-        <div class="field"><span>release ms</span><input type="number" id="glideReleaseInput" step="50" /></div>
+        <label class="glide-tog"><input type="checkbox" id="ajerkGlideCheck" checked />glide</label>
+        <div class="field"><span>atk ms</span><input type="number" id="ajerkAtkInput" step="50" /></div>
+        <div class="field"><span>rel ms</span><input type="number" id="ajerkRelInput" step="50" /></div>
       </div>
     </div>
     <div class="opt">
       <label><input type="checkbox" id="angAccelCheck" /> Angular accel guard</label>
-      <div class="thresh">
+      <div class="thresh guard">
         <div class="field"><span>low</span><input type="number" id="angAccLowInput" step="1" /></div>
         <div class="field"><span>high</span><input type="number" id="angAccHighInput" step="1" /></div>
         <div class="field"><span>smooth</span><input type="number" id="angAccSmoothInput" step="0.05" min="0" max="1" /></div>
+        <label class="glide-tog"><input type="checkbox" id="angAccGlideCheck" checked />glide</label>
+        <div class="field"><span>atk ms</span><input type="number" id="angAccAtkInput" step="50" /></div>
+        <div class="field"><span>rel ms</span><input type="number" id="angAccRelInput" step="50" /></div>
       </div>
     </div>
     <div class="opt">
       <label><input type="checkbox" id="decelCheck" checked /> Angular decel guard</label>
-      <div class="thresh">
+      <div class="thresh guard">
         <div class="field"><span>low</span><input type="number" id="decelLowInput" step="1" /></div>
         <div class="field"><span>high</span><input type="number" id="decelHighInput" step="1" /></div>
         <div class="field"><span>smooth</span><input type="number" id="decelSmoothInput" step="0.05" min="0" max="1" /></div>
+        <label class="glide-tog"><input type="checkbox" id="decelGlideCheck" checked />glide</label>
+        <div class="field"><span>atk ms</span><input type="number" id="decelAtkInput" step="50" /></div>
+        <div class="field"><span>rel ms</span><input type="number" id="decelRelInput" step="50" /></div>
       </div>
     </div>
     <div class="opt">
@@ -335,6 +352,10 @@
         <div class="field"><span>spd hi</span><input type="number" id="dynSpdHiInput" step="1" /></div>
         <div class="field"><span>dec lo</span><input type="number" id="dynDecLoInput" step="1" /></div>
         <div class="field"><span>dec hi</span><input type="number" id="dynDecHiInput" step="1" /></div>
+        <div class="break"></div>
+        <label class="glide-tog"><input type="checkbox" id="dynGlideCheck" checked />glide</label>
+        <div class="field"><span>atk ms</span><input type="number" id="spdAtkInput" step="50" /></div>
+        <div class="field"><span>rel ms</span><input type="number" id="spdRelInput" step="50" /></div>
       </div>
     </div>
     <div class="opt">
@@ -399,12 +420,18 @@
   const accelCheck = document.getElementById("accelCheck");
   const sjerkCheck = document.getElementById("sjerkCheck");
   const ajerkCheck = document.getElementById("ajerkCheck");
-  const glideCheck = document.getElementById("glideCheck");
   const decelCheck = document.getElementById("decelCheck");
   const angAccelCheck = document.getElementById("angAccelCheck");
   const inertiaCheck = document.getElementById("inertiaCheck");
   const dynSpeedCheck = document.getElementById("dynSpeedCheck");
   const leadCompCheck = document.getElementById("leadCompCheck");
+  // Per-guard (and dynamic-speed) glide on/off toggles.
+  const accGlideCheck = document.getElementById("accGlideCheck");
+  const sjerkGlideCheck = document.getElementById("sjerkGlideCheck");
+  const ajerkGlideCheck = document.getElementById("ajerkGlideCheck");
+  const decelGlideCheck = document.getElementById("decelGlideCheck");
+  const angAccGlideCheck = document.getElementById("angAccGlideCheck");
+  const dynGlideCheck = document.getElementById("dynGlideCheck");
 
   // Smoothing: when off, snap to the target instead of easing toward it.
   // Orientation mode (see the segmented toggle below): "Predicted" extrapolates
@@ -420,30 +447,37 @@
   // signal, which dips through zero on a sign change). Off by default.
   // AbsJerk guard: keyed off the rectify-then-smooth linear-jerk envelope (stays
   // elevated across a sign change). On by default.
-  // Damp glide: ease the combined guard damping toward its target in both
-  // directions (over separate attack/release times) instead of snapping, so a
+  // Damp glide (per guard): ease each guard's damping toward its target in both
+  // directions (over its own attack/release times) instead of snapping, so a
   // guard engaging abruptly doesn't slam `damp` and cause its own flicker.
   let smoothing = true;
   let prediction = true;
   let accelGuard = true;
   let signedJerkGuard = false;
   let absJerkGuard = true;
-  let dampGlide = true;
   let decelGuard = true;   // idea 1: damp prediction during abrupt deceleration
   let angAccelGuard = false; // damp prediction during abrupt rotation onset (off: it opposes snappy onset)
   let inertia = true;      // inertial settle: cur coasts to rest, weak anchor to truth
   let dynSpeed = true;     // ramp the settle drive-saturation speed up with deceleration
   let leadComp = true;     // extend the lead by the spring's damp/track lag so net = LEAD_MS
+  // Per-guard / dynamic-speed glide enables (default on).
+  let accGlide = true, sjerkGlide = true, ajerkGlide = true,
+      decelGlide = true, angAccGlide = true, dynGlide = true;
   smoothCheck.addEventListener("change", () => { smoothing = smoothCheck.checked; });
   accelCheck.addEventListener("change", () => { accelGuard = accelCheck.checked; });
   sjerkCheck.addEventListener("change", () => { signedJerkGuard = sjerkCheck.checked; });
   ajerkCheck.addEventListener("change", () => { absJerkGuard = ajerkCheck.checked; });
-  glideCheck.addEventListener("change", () => { dampGlide = glideCheck.checked; });
   decelCheck.addEventListener("change", () => { decelGuard = decelCheck.checked; });
   angAccelCheck.addEventListener("change", () => { angAccelGuard = angAccelCheck.checked; });
   inertiaCheck.addEventListener("change", () => { inertia = inertiaCheck.checked; });
   dynSpeedCheck.addEventListener("change", () => { dynSpeed = dynSpeedCheck.checked; });
   leadCompCheck.addEventListener("change", () => { leadComp = leadCompCheck.checked; });
+  accGlideCheck.addEventListener("change", () => { accGlide = accGlideCheck.checked; });
+  sjerkGlideCheck.addEventListener("change", () => { sjerkGlide = sjerkGlideCheck.checked; });
+  ajerkGlideCheck.addEventListener("change", () => { ajerkGlide = ajerkGlideCheck.checked; });
+  decelGlideCheck.addEventListener("change", () => { decelGlide = decelGlideCheck.checked; });
+  angAccGlideCheck.addEventListener("change", () => { angAccGlide = angAccGlideCheck.checked; });
+  dynGlideCheck.addEventListener("change", () => { dynGlide = dynGlideCheck.checked; });
 
   // Orientation mode: segmented "Raw Sensor" / "Predicted" toggle. In Raw
   // Sensor mode the prediction is off and every prediction-related option is
@@ -456,7 +490,6 @@
     { box: accelCheck,  set: (v) => { accelGuard = v; } },
     { box: sjerkCheck,  set: (v) => { signedJerkGuard = v; } },
     { box: ajerkCheck,  set: (v) => { absJerkGuard = v; } },
-    { box: glideCheck,  set: (v) => { dampGlide = v; } },
     { box: decelCheck,  set: (v) => { decelGuard = v; } },
     { box: angAccelCheck, set: (v) => { angAccelGuard = v; } },
     { box: inertiaCheck, set: (v) => { inertia = v; } },
@@ -602,7 +635,16 @@
   let ajerkLowV = ABSJERK_LOW, ajerkHighV = ABSJERK_HIGH;
   let decelLowV = DECEL_LOW, decelHighV = DECEL_HIGH;
   let angAccLowV = ANGACC_LOW, angAccHighV = ANGACC_HIGH;
-  let glideAttackV = GLIDE_ATTACK_MS, glideReleaseV = GLIDE_RELEASE_MS;
+  // Per-guard (and dynamic-speed) glide attack/release times (ms) plus the
+  // gliding state each one carries. Seeded from the shared GLIDE_* defaults.
+  let accAtkV = GLIDE_ATTACK_MS, accRelV = GLIDE_RELEASE_MS;
+  let sjerkAtkV = GLIDE_ATTACK_MS, sjerkRelV = GLIDE_RELEASE_MS;
+  let ajerkAtkV = GLIDE_ATTACK_MS, ajerkRelV = GLIDE_RELEASE_MS;
+  let decelAtkV = GLIDE_ATTACK_MS, decelRelV = GLIDE_RELEASE_MS;
+  let angAccAtkV = GLIDE_ATTACK_MS, angAccRelV = GLIDE_RELEASE_MS;
+  let spdAtkV = GLIDE_ATTACK_MS, spdRelV = GLIDE_RELEASE_MS;
+  const accGl = { v: 1 }, sjerkGl = { v: 1 }, ajerkGl = { v: 1 },
+        decelGl = { v: 1 }, angAccGl = { v: 1 }, spdGl = { v: SETTLE_SPEED };
   let curSmoothV = CUR_SMOOTH;
   let settleSpeedV = SETTLE_SPEED, trackStiffV = TRACK_STIFF,
       anchorStiffV = ANCHOR_STIFF, dampStiffV = DAMP_STIFF;
@@ -623,14 +665,36 @@
       if (!Number.isNaN(v)) set(v);
     });
   }
+
+  // Ease st.v toward target with separate attack/release time constants. For
+  // guards, "attack" = engaging more damping (value falling, attackLower=true);
+  // for dynamic speed it's the value rising (attackLower=false). When off, snap
+  // (keeps state in sync so toggling is seamless).
+  function glide(st, target, on, atkMs, relMs, dtMs, attackLower) {
+    if (!on) { st.v = target; return target; }
+    const attack = attackLower ? target < st.v : target > st.v;
+    const tau = attack ? atkMs : relMs;
+    st.v += (target - st.v) * (1 - Math.exp(-dtMs / tau));
+    return st.v;
+  }
   bindThreshold("accLowInput", ACC_LOW, (v) => { accLowV = v; });
   bindThreshold("accHighInput", ACC_HIGH, (v) => { accHighV = v; });
   bindThreshold("sjerkLowInput", JERK_LOW, (v) => { sjerkLowV = v; });
   bindThreshold("sjerkHighInput", JERK_HIGH, (v) => { sjerkHighV = v; });
   bindThreshold("ajerkLowInput", ABSJERK_LOW, (v) => { ajerkLowV = v; });
   bindThreshold("ajerkHighInput", ABSJERK_HIGH, (v) => { ajerkHighV = v; });
-  bindThreshold("glideAttackInput", GLIDE_ATTACK_MS, (v) => { glideAttackV = v; });
-  bindThreshold("glideReleaseInput", GLIDE_RELEASE_MS, (v) => { glideReleaseV = v; });
+  bindThreshold("accAtkInput", GLIDE_ATTACK_MS, (v) => { accAtkV = v; });
+  bindThreshold("accRelInput", GLIDE_RELEASE_MS, (v) => { accRelV = v; });
+  bindThreshold("sjerkAtkInput", GLIDE_ATTACK_MS, (v) => { sjerkAtkV = v; });
+  bindThreshold("sjerkRelInput", GLIDE_RELEASE_MS, (v) => { sjerkRelV = v; });
+  bindThreshold("ajerkAtkInput", GLIDE_ATTACK_MS, (v) => { ajerkAtkV = v; });
+  bindThreshold("ajerkRelInput", GLIDE_RELEASE_MS, (v) => { ajerkRelV = v; });
+  bindThreshold("decelAtkInput", GLIDE_ATTACK_MS, (v) => { decelAtkV = v; });
+  bindThreshold("decelRelInput", GLIDE_RELEASE_MS, (v) => { decelRelV = v; });
+  bindThreshold("angAccAtkInput", GLIDE_ATTACK_MS, (v) => { angAccAtkV = v; });
+  bindThreshold("angAccRelInput", GLIDE_RELEASE_MS, (v) => { angAccRelV = v; });
+  bindThreshold("spdAtkInput", GLIDE_ATTACK_MS, (v) => { spdAtkV = v; });
+  bindThreshold("spdRelInput", GLIDE_RELEASE_MS, (v) => { spdRelV = v; });
   bindThreshold("smoothInput", CUR_SMOOTH, (v) => { curSmoothV = v; });
   bindThreshold("decelLowInput", DECEL_LOW, (v) => { decelLowV = v; });
   bindThreshold("decelHighInput", DECEL_HIGH, (v) => { decelHighV = v; });
@@ -758,7 +822,6 @@
   let absJerk = 0;               // EMA of |raw linear jerk| (rectify-then-smooth envelope); drives the jerk guard
   let prevLinAccelMag = 0;       // previous linear-accel magnitude, for the jerk finite-difference
   let prevMotionTime = 0;        // timestamp of the last devicemotion sample (ms)
-  let guardDamp = 1;             // attack/release-held damping actually applied to the prediction
 
   // Convert (alpha, beta, gamma) Euler angles (degrees, ZXY order per the
   // W3C DeviceOrientation spec) into a quaternion, then rotate [0,0,1].
@@ -1106,28 +1169,24 @@
     let angAccDamp = 1 - (angAccel - aaLow) / (aaHigh - aaLow);
     if (angAccDamp < 0) angAccDamp = 0; else if (angAccDamp > 1) angAccDamp = 1;
 
-    // Instantaneous target = product of the enabled guards. (Ramps are always
-    // computed so the debug overlay can show them; applied only when on.)
-    let targetDamp = 1;
-    if (accelGuard) targetDamp *= accDamp;
-    if (signedJerkGuard) targetDamp *= sJerkDamp;
-    if (absJerkGuard) targetDamp *= aJerkDamp;
-    if (decelGuard) targetDamp *= decelDamp;
-    if (angAccelGuard) targetDamp *= angAccDamp;
+    // Per-guard damp glide: ease each guard's raw ramp toward its target with
+    // its own attack (engaging more damping) / release (backing off) times so no
+    // guard snaps `damp` and causes its own flicker. The instantaneous ramps
+    // above feed the debug bars; the glided values feed the applied damping.
+    const dtMs = frameDt * 1000;
+    const accG    = glide(accGl,    accDamp,    accGlide,    accAtkV,    accRelV,    dtMs, true);
+    const sJerkG  = glide(sjerkGl,  sJerkDamp,  sjerkGlide,  sjerkAtkV,  sjerkRelV,  dtMs, true);
+    const aJerkG  = glide(ajerkGl,  aJerkDamp,  ajerkGlide,  ajerkAtkV,  ajerkRelV,  dtMs, true);
+    const decelG  = glide(decelGl,  decelDamp,  decelGlide,  decelAtkV,  decelRelV,  dtMs, true);
+    const angAccG = glide(angAccGl, angAccDamp, angAccGlide, angAccAtkV, angAccRelV, dtMs, true);
 
-    // Damp glide: ease `guardDamp` toward the target in both directions, with a
-    // separate (faster) attack time when engaging more damping and a release
-    // time when backing off — so no direction snaps. When off, apply directly.
-    if (dampGlide) {
-      const atkMs = debugOn ? glideAttackV : GLIDE_ATTACK_MS;
-      const relMs = debugOn ? glideReleaseV : GLIDE_RELEASE_MS;
-      const tau = targetDamp < guardDamp ? atkMs : relMs; // more damping vs less
-      const k = 1 - Math.exp(-(frameDt * 1000) / tau);
-      guardDamp += (targetDamp - guardDamp) * k;
-    } else {
-      guardDamp = targetDamp; // keep state in sync so toggling is seamless
-    }
-    const damp = guardDamp;
+    // targetDamp = raw product (tgtDamp bar); damp = glided product (applied).
+    let targetDamp = 1, damp = 1;
+    if (accelGuard)      { targetDamp *= accDamp;    damp *= accG; }
+    if (signedJerkGuard) { targetDamp *= sJerkDamp;  damp *= sJerkG; }
+    if (absJerkGuard)    { targetDamp *= aJerkDamp;  damp *= aJerkG; }
+    if (decelGuard)      { targetDamp *= decelDamp;  damp *= decelG; }
+    if (angAccelGuard)   { targetDamp *= angAccDamp; damp *= angAccG; }
     predAngle *= damp;
 
     // Target the prediction when on; otherwise the raw reading (pre-update).
@@ -1154,6 +1213,9 @@
         if (r < 0) r = 0; else if (r > 1) r = 1;
         effSpeed = dynSpdLoV + (dynSpdHiV - dynSpdLoV) * r;
       }
+      // Glide the effective speed (attack as it rises -> releases tracking) so
+      // the drive gate eases instead of snapping when deceleration spikes.
+      effSpeed = glide(spdGl, effSpeed, dynGlide, spdAtkV, spdRelV, frameDt * 1000, false);
       speedDbg = effSpeed;
       let drive = effSpeed > 0 ? angSpeed / effSpeed : 1; // 1 while moving -> 0 at rest
       if (drive > 1) drive = 1; else if (drive < 0) drive = 0;
