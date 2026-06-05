@@ -313,6 +313,15 @@
       </div>
     </div>
     <div class="opt">
+      <label><input type="checkbox" id="dynSpeedCheck" checked /> Dynamic speed</label>
+      <div class="thresh">
+        <div class="field"><span>spd lo</span><input type="number" id="dynSpdLoInput" step="0.1" /></div>
+        <div class="field"><span>spd hi</span><input type="number" id="dynSpdHiInput" step="1" /></div>
+        <div class="field"><span>dec lo</span><input type="number" id="dynDecLoInput" step="1" /></div>
+        <div class="field"><span>dec hi</span><input type="number" id="dynDecHiInput" step="1" /></div>
+      </div>
+    </div>
+    <div class="opt">
       <label><input type="checkbox" id="leadCompCheck" checked /> Lead compensation</label>
     </div>
     <div class="opt">
@@ -377,6 +386,7 @@
   const glideCheck = document.getElementById("glideCheck");
   const decelCheck = document.getElementById("decelCheck");
   const inertiaCheck = document.getElementById("inertiaCheck");
+  const dynSpeedCheck = document.getElementById("dynSpeedCheck");
   const leadCompCheck = document.getElementById("leadCompCheck");
 
   // Smoothing: when off, snap to the target instead of easing toward it.
@@ -400,6 +410,7 @@
   let dampGlide = true;
   let decelGuard = true;   // idea 1: damp prediction during abrupt deceleration
   let inertia = true;      // inertial settle: cur coasts to rest, weak anchor to truth
+  let dynSpeed = true;     // ramp the settle drive-saturation speed up with deceleration
   let leadComp = true;     // extend the lead by the spring's damp/track lag so net = LEAD_MS
   smoothCheck.addEventListener("change", () => { smoothing = smoothCheck.checked; });
   accelCheck.addEventListener("change", () => { accelGuard = accelCheck.checked; });
@@ -408,6 +419,7 @@
   glideCheck.addEventListener("change", () => { dampGlide = glideCheck.checked; });
   decelCheck.addEventListener("change", () => { decelGuard = decelCheck.checked; });
   inertiaCheck.addEventListener("change", () => { inertia = inertiaCheck.checked; });
+  dynSpeedCheck.addEventListener("change", () => { dynSpeed = dynSpeedCheck.checked; });
   leadCompCheck.addEventListener("change", () => { leadComp = leadCompCheck.checked; });
 
   // Orientation mode: segmented "Raw Sensor" / "Predicted" toggle. In Raw
@@ -424,6 +436,7 @@
     { box: glideCheck,  set: (v) => { dampGlide = v; } },
     { box: decelCheck,  set: (v) => { decelGuard = v; } },
     { box: inertiaCheck, set: (v) => { inertia = v; } },
+    { box: dynSpeedCheck, set: (v) => { dynSpeed = v; } },
     { box: leadCompCheck, set: (v) => { leadComp = v; } },
     { box: smoothCheck, set: (v) => { smoothing = v; } },
   ];
@@ -536,6 +549,15 @@
                                  // frame() keeps the explicit integrators under their stability
                                  // bound, so damp can exceed 2/dt at low frame rates.)
 
+  // Dynamic settle speed: ramp the drive-saturation speed from DYN_SPEED_LOW
+  // (still/accelerating -> snappy onset) up to DYN_SPEED_HIGH as angular
+  // deceleration rises across [DYN_DECEL_LOW, DYN_DECEL_HIGH], so the end of a
+  // motion releases tracking and the spring coasts to the measured spot.
+  const DYN_SPEED_LOW  = 1.0;   // rad/s; drive-saturation speed at low decel
+  const DYN_SPEED_HIGH = 28;    // rad/s; at/above DYN_DECEL_HIGH
+  const DYN_DECEL_LOW  = 20;    // rad/s^2; below this, speed = low
+  const DYN_DECEL_HIGH = 30;    // rad/s^2; above this, speed = high
+
   // Live, debug-editable copies of each guard's LOW/HIGH band. Default to the
   // constants above; the number inputs (visible only in debug mode) update
   // these, and frame() uses them in place of the constants when debug is on.
@@ -547,6 +569,8 @@
   let curSmoothV = CUR_SMOOTH;
   let settleSpeedV = SETTLE_SPEED, trackStiffV = TRACK_STIFF,
       anchorStiffV = ANCHOR_STIFF, dampStiffV = DAMP_STIFF;
+  let dynSpdLoV = DYN_SPEED_LOW, dynSpdHiV = DYN_SPEED_HIGH;
+  let dynDecLoV = DYN_DECEL_LOW, dynDecHiV = DYN_DECEL_HIGH;
   let accSmoothV = ACC_SMOOTH;       // EMA factor for accel magnitude (debug-editable)
   let sjerkSmoothV = JERK_SMOOTH;    // EMA factor for signed jerk
   let ajerkSmoothV = ABSJERK_SMOOTH; // EMA factor for the rectified-jerk envelope
@@ -576,6 +600,10 @@
   bindThreshold("trackStiffInput", TRACK_STIFF, (v) => { trackStiffV = v; });
   bindThreshold("anchorStiffInput", ANCHOR_STIFF, (v) => { anchorStiffV = v; });
   bindThreshold("dampStiffInput", DAMP_STIFF, (v) => { dampStiffV = v; });
+  bindThreshold("dynSpdLoInput", DYN_SPEED_LOW, (v) => { dynSpdLoV = v; });
+  bindThreshold("dynSpdHiInput", DYN_SPEED_HIGH, (v) => { dynSpdHiV = v; });
+  bindThreshold("dynDecLoInput", DYN_DECEL_LOW, (v) => { dynDecLoV = v; });
+  bindThreshold("dynDecHiInput", DYN_DECEL_HIGH, (v) => { dynDecHiV = v; });
 
   // Inertial-settle presets, spanning the damping spectrum (damp = 2*sqrt(track)*zeta):
   //   Soft = overdamped (zeta~1.1), smoothest/most jitter-rejecting, slow aim
@@ -794,7 +822,7 @@
 
   // --- Debug overlay ----------------------------------------------------
   // Values computed inside frame() that the overlay needs to read back.
-  const dbg = { damp: 1, targetDamp: 1, accDamp: 1, sJerkDamp: 1, aJerkDamp: 1, decelDamp: 1, drive: 1, predAngle: 0, fps: 0, oriHz: 0, motHz: 0 };
+  const dbg = { damp: 1, targetDamp: 1, accDamp: 1, sJerkDamp: 1, aJerkDamp: 1, decelDamp: 1, drive: 1, speed: SETTLE_SPEED, predAngle: 0, fps: 0, oriHz: 0, motHz: 0 };
 
   // Each metric: a live accessor, a bar range, and a formatter. `bip` draws a
   // bipolar bar growing out from the center; `ticks` marks thresholds (accel).
@@ -817,6 +845,7 @@
       color: (v) => v >= decelHighV ? "#ff5b5b" : (v >= decelLowV ? "#ff9b3b" : "#5b9bff"),
       fmt: (v) => v.toFixed(1) },
     { label: "drive",   get: () => dbg.drive,     min: 0, max: 1, enabled: () => inertia, fmt: (v) => v.toFixed(2) },
+    { label: "speed",   get: () => dbg.speed,     min: 0, max: 30, enabled: () => inertia, fmt: (v) => v.toFixed(1) },
     { label: "lag ms",  get: () => trackStiffV > 0 ? 1000 * dampStiffV / trackStiffV : 0,
       min: 0, max: 120, enabled: () => leadComp && inertia, fmt: (v) => v.toFixed(0) },
     { label: "tgtDamp", get: () => dbg.targetDamp, min: 0, max: 1, fmt: (v) => v.toFixed(2) },
@@ -1009,11 +1038,22 @@
     // reading. A weak always-on spring pulls `cur` back to the true measured
     // vector over seconds, killing the drift the coast would otherwise leave.
     // Semi-implicit (symplectic) Euler: update velocity, then position.
-    let driveDbg = 1;
+    let driveDbg = 1, speedDbg = settleSpeedV;
     if (inertia && prediction) {
       // These read the live values directly (not gated on debug) so the preset
       // buttons and sliders tune the feel whether or not Debug is open.
-      let drive = angSpeed / settleSpeedV;       // 1 while moving -> 0 at rest
+      // Effective drive-saturation speed: static (settleSpeedV) unless Dynamic
+      // speed ramps it up with angular deceleration so onset stays snappy but
+      // the end of a motion releases tracking and the spring coasts in smoothly.
+      let effSpeed = settleSpeedV;
+      if (dynSpeed) {
+        const denom = dynDecHiV - dynDecLoV;
+        let r = denom > 0 ? (angDecel - dynDecLoV) / denom : (angDecel >= dynDecHiV ? 1 : 0);
+        if (r < 0) r = 0; else if (r > 1) r = 1;
+        effSpeed = dynSpdLoV + (dynSpdHiV - dynSpdLoV) * r;
+      }
+      speedDbg = effSpeed;
+      let drive = effSpeed > 0 ? angSpeed / effSpeed : 1; // 1 while moving -> 0 at rest
       if (drive > 1) drive = 1; else if (drive < 0) drive = 0;
       driveDbg = drive;
       const kTrack  = trackStiffV * drive; // strong, gated off at rest
@@ -1075,6 +1115,7 @@
       dbg.aJerkDamp = aJerkDamp;
       dbg.decelDamp = decelDamp;
       dbg.drive = driveDbg;
+      dbg.speed = speedDbg;
       dbg.predAngle = predAngle;
       if (frameDt > 0) dbg.fps += (1 / frameDt - dbg.fps) * 0.1;
       updateDebug();
