@@ -348,7 +348,7 @@
       </div>
     </div>
     <div class="opt">
-      <label><input type="checkbox" id="dynSpeedCheck" checked /> Dynamic speed<button type="button" class="glide-btn active" id="dynGlideBtn">glide</button></label>
+      <label><input type="checkbox" id="dynSpeedCheck" /> Dynamic speed<button type="button" class="glide-btn active" id="dynGlideBtn">glide</button></label>
       <div class="thresh">
         <div class="field"><span>spd lo</span><input type="number" id="dynSpdLoInput" step="0.1" /></div>
         <div class="field"><span>spd hi</span><input type="number" id="dynSpdHiInput" step="1" /></div>
@@ -357,6 +357,15 @@
         <div class="break"></div>
         <div class="field"><span>atk ms</span><input type="number" id="spdAtkInput" step="50" /></div>
         <div class="field"><span>rel ms</span><input type="number" id="spdRelInput" step="50" /></div>
+      </div>
+    </div>
+    <div class="opt">
+      <label><input type="checkbox" id="accelGateCheck" checked /> Accel gate</label>
+      <div class="thresh">
+        <div class="field"><span>acc hi</span><input type="number" id="agAccHiInput" step="0.5" /></div>
+        <div class="field"><span>acc lo</span><input type="number" id="agAccLoInput" step="0.5" /></div>
+        <div class="field"><span>spd lo</span><input type="number" id="agSpdLoInput" step="0.1" /></div>
+        <div class="field"><span>spd hi</span><input type="number" id="agSpdHiInput" step="1" /></div>
       </div>
     </div>
     <div class="opt">
@@ -425,6 +434,7 @@
   const angAccelCheck = document.getElementById("angAccelCheck");
   const inertiaCheck = document.getElementById("inertiaCheck");
   const dynSpeedCheck = document.getElementById("dynSpeedCheck");
+  const accelGateCheck = document.getElementById("accelGateCheck");
   const leadCompCheck = document.getElementById("leadCompCheck");
 
   // Smoothing: when off, snap to the target instead of easing toward it.
@@ -452,7 +462,8 @@
   let decelGuard = true;   // idea 1: damp prediction during abrupt deceleration
   let angAccelGuard = false; // damp prediction during abrupt rotation onset (off: it opposes snappy onset)
   let inertia = true;      // inertial settle: cur coasts to rest, weak anchor to truth
-  let dynSpeed = true;     // ramp the settle drive-saturation speed up with deceleration
+  let dynSpeed = false;    // ramp the settle drive-saturation speed up with deceleration
+  let accelGate = true;    // latch settle speed low on flick onset, high at motion end
   let leadComp = true;     // extend the lead by the spring's damp/track lag so net = LEAD_MS
   // Per-guard / dynamic-speed glide enables (default on).
   let accGlide = true, sjerkGlide = true, ajerkGlide = true,
@@ -465,6 +476,7 @@
   angAccelCheck.addEventListener("change", () => { angAccelGuard = angAccelCheck.checked; });
   inertiaCheck.addEventListener("change", () => { inertia = inertiaCheck.checked; });
   dynSpeedCheck.addEventListener("change", () => { dynSpeed = dynSpeedCheck.checked; });
+  accelGateCheck.addEventListener("change", () => { accelGate = accelGateCheck.checked; });
   leadCompCheck.addEventListener("change", () => { leadComp = leadCompCheck.checked; });
   // Glide pill toggles (one per guard + dynamic speed): flip the .active class
   // and the backing flag on click. Seeded active in the markup (all default on).
@@ -500,6 +512,7 @@
     { box: angAccelCheck, set: (v) => { angAccelGuard = v; } },
     { box: inertiaCheck, set: (v) => { inertia = v; } },
     { box: dynSpeedCheck, set: (v) => { dynSpeed = v; } },
+    { box: accelGateCheck, set: (v) => { accelGate = v; } },
     { box: leadCompCheck, set: (v) => { leadComp = v; } },
     { box: smoothCheck, set: (v) => { smoothing = v; } },
   ];
@@ -633,6 +646,16 @@
   const DYN_DECEL_LOW  = 20;    // rad/s^2; below this, speed = low
   const DYN_DECEL_HIGH = 30;    // rad/s^2; above this, speed = high
 
+  // Accel gate (alternative to Dynamic speed): a latched drive-saturation speed.
+  // On a flick onset (angular accel above AGATE_ACC_HI) it snaps speed LOW so the
+  // spring tracks hard; at the end of a motion (angular accel back below
+  // AGATE_ACC_LO while angular decel exceeds it) it snaps speed HIGH so the drive
+  // releases and `cur` coasts in. Holds between transitions.
+  const AGATE_ACC_HI = 1;   // rad/s^2; accel above this -> speed = low (snappy onset)
+  const AGATE_ACC_LO = 2;   // rad/s^2; accel below this (and decel above it) -> speed high
+  const AGATE_SPD_LO = 0.5; // rad/s; tracking speed during onset
+  const AGATE_SPD_HI = 30;  // rad/s; release speed at motion end
+
   // Live, debug-editable copies of each guard's LOW/HIGH band. Default to the
   // constants above; the number inputs (visible only in debug mode) update
   // these, and frame() uses them in place of the constants when debug is on.
@@ -656,6 +679,9 @@
       anchorStiffV = ANCHOR_STIFF, dampStiffV = DAMP_STIFF;
   let dynSpdLoV = DYN_SPEED_LOW, dynSpdHiV = DYN_SPEED_HIGH;
   let dynDecLoV = DYN_DECEL_LOW, dynDecHiV = DYN_DECEL_HIGH;
+  let agAccHiV = AGATE_ACC_HI, agAccLoV = AGATE_ACC_LO;
+  let agSpdLoV = AGATE_SPD_LO, agSpdHiV = AGATE_SPD_HI;
+  let agSpeed = AGATE_SPD_HI;   // latched accel-gate speed, persists across frames
   let accSmoothV = ACC_SMOOTH;       // EMA factor for accel magnitude (debug-editable)
   let sjerkSmoothV = JERK_SMOOTH;    // EMA factor for signed jerk
   let ajerkSmoothV = ABSJERK_SMOOTH; // EMA factor for the rectified-jerk envelope
@@ -714,6 +740,10 @@
   bindThreshold("dynSpdHiInput", DYN_SPEED_HIGH, (v) => { dynSpdHiV = v; });
   bindThreshold("dynDecLoInput", DYN_DECEL_LOW, (v) => { dynDecLoV = v; });
   bindThreshold("dynDecHiInput", DYN_DECEL_HIGH, (v) => { dynDecHiV = v; });
+  bindThreshold("agAccHiInput", AGATE_ACC_HI, (v) => { agAccHiV = v; });
+  bindThreshold("agAccLoInput", AGATE_ACC_LO, (v) => { agAccLoV = v; });
+  bindThreshold("agSpdLoInput", AGATE_SPD_LO, (v) => { agSpdLoV = v; });
+  bindThreshold("agSpdHiInput", AGATE_SPD_HI, (v) => { agSpdHiV = v; });
 
   // Inertial-settle presets, spanning the damping spectrum (damp = 2*sqrt(track)*zeta):
   //   Soft = overdamped (zeta~1.1), smoothest/most jitter-rejecting, slow aim
@@ -1219,6 +1249,14 @@
         let r = denom > 0 ? (angDecel - dynDecLoV) / denom : (angDecel >= dynDecHiV ? 1 : 0);
         if (r < 0) r = 0; else if (r > 1) r = 1;
         effSpeed = dynSpdLoV + (dynSpdHiV - dynSpdLoV) * r;
+      }
+      // Accel gate (overrides Dynamic speed when on): latch speed LOW on a flick
+      // onset (angular accel above acc-hi), HIGH at the motion's end (angular
+      // accel back below acc-lo while angular decel exceeds it); hold otherwise.
+      if (accelGate) {
+        if (angAccel > agAccHiV) agSpeed = agSpdLoV;
+        else if (angAccel < agAccLoV && angDecel > agAccLoV) agSpeed = agSpdHiV;
+        effSpeed = agSpeed;
       }
       // Glide the effective speed (attack as it rises -> releases tracking) so
       // the drive gate eases instead of snapping when deceleration spikes.
