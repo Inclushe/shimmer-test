@@ -1291,12 +1291,18 @@
       // turn); Raw -> raw truth (lead fades / unwinds). The only absolute coupling.
       const st = leadHold ? target : measVec;
       if (ring) {
-        // 2nd-order underdamped spring: `cur` carries velocity, so it overshoots
-        // and rings at the stop (the old "Snap" feel). c = 2*sqrt(k)*zeta.
+        // 2nd-order underdamped spring toward `st`: `cur` carries velocity, so it
+        // overshoots and rings at the stop (the old "Snap" feel). On top of it a
+        // weak always-on anchor pulls toward RAW truth, so `anchor` governs the
+        // slow final homing to truth independently of the bounce (stiff/zeta).
+        // In spring mode `anchor` acts as that weak secondary stiffness (1/s^2 --
+        // it's a rate in ease mode); keep it << stiff. c damps the main spring.
         const k = springStiffV;
         const c = 2 * Math.sqrt(k) * springZetaV;
         for (let i = 0; i < 3; i++) {
-          const accel = k * (st[i] - cur[i]) - c * curVel[i];
+          const accel = k * (st[i] - cur[i])
+                      + anchorV * (measVec[i] - cur[i])
+                      - c * curVel[i];
           curVel[i] += accel * frameDt;
           cur[i]    += curVel[i] * frameDt;
         }
