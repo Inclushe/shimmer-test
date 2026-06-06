@@ -359,7 +359,6 @@
       <div class="thresh">
         <div class="field"><span>stiff</span><input type="number" id="stiffInput" step="100" /></div>
         <div class="field"><span>zeta</span><input type="number" id="zetaInput" step="0.05" /></div>
-        <div class="field"><span>sdrop</span><input type="number" id="sdropInput" step="0.05" min="0" max="1" /></div>
       </div>
     </div>
     <div class="opt">
@@ -636,9 +635,6 @@
   // damp = 2*sqrt(stiff)*zeta; zeta < 1 rings, zeta >= 1 is overdamped (no ring).
   const RING_STIFF = 2500;       // 1/s^2; spring stiffness toward the settle target
   const RING_ZETA  = 0.7;        // damping ratio; < 1 = overshoot/ring (old Snap = 0.7)
-  const SPRING_DROP = 0.5;       // gate drop fraction used when spring settle is on: lower than
-                                 // VEL_DROP so the gate holds FAST longer, letting the spring's
-                                 // bounce start from a fuller motion.
   // Velocity peak-detector: FAST while the detector velocity climbs/holds at its
   // peak; SLOW once it falls below VEL_DROP of the peak (a movement winding down,
   // latched through to rest); re-arm FAST when it rises VEL_RISE above its valley
@@ -670,7 +666,6 @@
       followTcV = FOLLOW_TC_MS;      // ms; Damped follow-speed time constant (the `damp ms` field)
   let settleMode = SETTLE_MODE;      // 'direct' | 'damped'; onset style, set by the presets
   let springStiffV = RING_STIFF, springZetaV = RING_ZETA; // spring-settle knobs (`stiff`/`zeta`)
-  let springDropV = SPRING_DROP;     // gate drop fraction while spring settle is on (`sdrop`)
   let velDropV = VEL_DROP, velRiseV = VEL_RISE, velSmoothV = VEL_DET_SMOOTH;
   let accSmoothV = ACC_SMOOTH;       // EMA factor for accel magnitude (debug-editable)
   let sjerkSmoothV = JERK_SMOOTH;    // EMA factor for signed jerk
@@ -725,7 +720,6 @@
   bindThreshold("dampStiffInput", FOLLOW_TC_MS, (v) => { followTcV = v; });
   bindThreshold("stiffInput", RING_STIFF, (v) => { springStiffV = v; });
   bindThreshold("zetaInput", RING_ZETA, (v) => { springZetaV = v; });
-  bindThreshold("sdropInput", SPRING_DROP, (v) => { springDropV = v; });
   bindThreshold("dropInput", VEL_DROP, (v) => { velDropV = v; });
   bindThreshold("riseInput", VEL_RISE, (v) => { velRiseV = v; });
   bindThreshold("vsmoothInput", VEL_DET_SMOOTH, (v) => { velSmoothV = v; });
@@ -930,15 +924,21 @@
         detVel += (angSpeed - detVel) * detSmooth;
         let predSpeed = angSpeed + (angAccel - angDecel) * leadTimeV;
         if (predSpeed < 0) predSpeed = 0; // speed magnitude can't go negative
+        // Account for spring settle: the spring carries its own momentum, so the
+        // rendered point keeps moving (unwinding the lead, then ringing) after the
+        // device slows. Fold the spring's angular speed |curVel| into the predicted
+        // velocity so the gate sees that continued motion and holds FAST through
+        // the wind-down/bounce instead of tripping SLOW on the raw decel alone.
+        if (ring) {
+          const springSpeed = Math.hypot(curVel[0], curVel[1], curVel[2]);
+          if (springSpeed > predSpeed) predSpeed = springSpeed;
+        }
         detVelPred += (predSpeed - detVelPred) * detSmooth;
         const gateVel = gatePredicted ? detVelPred : detVel;
         // Peak/valley state machine: FAST while gateVel climbs/holds at its peak;
         // SLOW once it falls below VEL_DROP of the peak (movement winding down,
         // latched to rest); re-arm FAST when it rises VEL_RISE above its valley.
-        // Spring settle holds FAST longer (lower drop fraction) so the bounce
-        // starts from a fuller motion; falls back to the normal drop otherwise.
-        const dropFrac = ring ? (debugOn ? springDropV : SPRING_DROP)
-                              : (debugOn ? velDropV : VEL_DROP);
+        const dropFrac = debugOn ? velDropV : VEL_DROP;
         const riseAbs = debugOn ? velRiseV : VEL_RISE;
         if (settleFast) {
           if (gateVel > velPeak) velPeak = gateVel;
@@ -1028,13 +1028,13 @@
     { label: "vel m",   get: () => dbg.vel,       min: 0, max: 6, enabled: () => inertia,
       tickEnabled: () => !gatePredicted, // peak/drop ticks ride the active gate signal
       ticks: [{ at: () => dbg.peak, color: "#5bff9b" },
-              { at: () => dbg.peak * (ring ? springDropV : velDropV), color: "#ff9b3b", dashed: true }],
+              { at: () => dbg.peak * velDropV, color: "#ff9b3b", dashed: true }],
       color: () => settleFast ? "#5b9bff" : "rgba(255,255,255,0.4)",
       fmt: (v) => v.toFixed(2) },
     { label: "vel p",   get: () => dbg.velPred,   min: 0, max: 6, enabled: () => inertia,
       tickEnabled: () => gatePredicted,
       ticks: [{ at: () => dbg.peak, color: "#5bff9b" },
-              { at: () => dbg.peak * (ring ? springDropV : velDropV), color: "#ff9b3b", dashed: true }],
+              { at: () => dbg.peak * velDropV, color: "#ff9b3b", dashed: true }],
       color: () => settleFast ? "#5b9bff" : "rgba(255,255,255,0.4)",
       fmt: (v) => v.toFixed(2) },
     { label: "lead ms", get: () => leadTimeV * 1000,
