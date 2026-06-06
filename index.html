@@ -336,12 +336,12 @@
     <div class="opt">
       <label><input type="checkbox" id="inertiaCheck" checked /> Inertial settle</label>
       <div class="thresh">
-        <div class="field"><span>speed</span><input type="number" id="settleSpeedInput" step="0.1" /></div>
         <div class="field"><span>track</span><input type="number" id="trackStiffInput" step="10" /></div>
         <div class="field"><span>anchor</span><input type="number" id="anchorStiffInput" step="0.5" /></div>
         <div class="field"><span>damp</span><input type="number" id="dampStiffInput" step="1" /></div>
-        <div class="field"><span>floor</span><input type="number" id="settleFloorInput" step="0.02" /></div>
-        <div class="field"><span>gsmooth</span><input type="number" id="gateSmoothInput" step="0.02" min="0" max="1" /></div>
+        <div class="field"><span>drop</span><input type="number" id="dropInput" step="0.05" min="0" max="1" /></div>
+        <div class="field"><span>rise</span><input type="number" id="riseInput" step="0.05" /></div>
+        <div class="field"><span>vsmooth</span><input type="number" id="vsmoothInput" step="0.05" min="0" max="1" /></div>
       </div>
       <div class="presets">
         <button type="button" data-preset="soft">Soft</button>
@@ -551,7 +551,7 @@
   const LEAD_MS = 90;            // how far ahead to predict (ms)
   const MAX_LEAD_ANGLE = 0.6;    // clamp on predicted rotation (radians)
   const VEL_SMOOTH = 0.35;       // angular-velocity smoothing (0-1)
-  const GATE_SMOOTH = 0.1;       // heavier EMA for the drive-gate signal (stabler rest level)
+  const VEL_DET_SMOOTH = 0.3;    // EMA for the peak-detector velocity (1.0 = raw angSpeed)
   const CUR_SMOOTH = 0.9;        // light de-jitter easing toward the prediction
   const OLD_SMOOTH = 0.15;       // pre-update easing (used when prediction off)
   const STALE_MS = 120;          // drop velocity if readings stop coming
@@ -596,12 +596,13 @@
   const ANGACC_HIGH = 30;        // above this the prediction is fully damped
   const ANGACC_SMOOTH = 0.2;     // EMA factor for the angular-acceleration signal
 
-  // Inertial settle: `cur` carries its own velocity. A speed-gated strong spring
-  // tracks the prediction while moving; near rest that drive fades and `cur`
-  // coasts to a stop under DAMP_STIFF. A weak always-on spring (ANCHOR_STIFF)
-  // re-centers `cur` on the true measured vector over seconds to kill drift.
-  const SETTLE_SPEED = 1.0;      // rad/s; at/above this the measurement drive is full
-  const TRACK_STIFF  = 2500;     // 1/s^2; strong tracking spring (gated by measured speed)
+  // Inertial settle: `cur` carries its own velocity. A FAST/SLOW velocity
+  // peak-detector gates a strong tracking spring: FAST (drive 1) tracks the
+  // prediction while a movement is building/held; once velocity falls off its
+  // peak it goes SLOW (drive 0) and `cur` coasts to a stop under DAMP_STIFF. A
+  // weak always-on spring (ANCHOR_STIFF) re-centers `cur` on the true measured
+  // vector over seconds to kill drift.
+  const TRACK_STIFF  = 2500;     // 1/s^2; strong tracking spring (gated FAST/SLOW)
   const ANCHOR_STIFF = 1;        // 1/s^2; weak constant spring toward measVec (drift correction)
   const DAMP_STIFF   = 70;       // 1/s; velocity damping. damp = 2*sqrt(track)*zeta; zeta=0.7
                                  // here is slightly underdamped so the predAngle lead reads as a
@@ -609,11 +610,13 @@
                                  // lead, so cur leads the raw sensor by ~62ms. (The dt clamp in
                                  // frame() keeps the explicit integrators under their stability
                                  // bound, so damp can exceed 2/dt at low frame rates.)
-  // Noise-floor deadband on the drive gate: the smoothed gate signal sits at a
-  // positive rest level (rectified sensor noise has a positive mean), so below
-  // SETTLE_FLOOR drive is forced to 0 and the stiff spring fully releases (cur
-  // coasts/anchors slowly). Any real motion exceeds the floor and drives fully.
-  const SETTLE_FLOOR = 0.15;     // rad/s; drive is 0 below this gate level
+  // Velocity peak-detector: FAST while the detector velocity climbs/holds at its
+  // peak; SLOW once it falls below VEL_DROP of the peak (a movement winding down,
+  // latched through to rest); re-arm FAST when it rises VEL_RISE above its valley
+  // (a new movement). VEL_DROP is a fraction so it scales with rotation size;
+  // VEL_RISE (rad/s) doubles as the rest-noise gate.
+  const VEL_DROP = 0.7;          // SLOW when detVel < peak * VEL_DROP
+  const VEL_RISE = 0.3;          // rad/s; FAST when detVel > valley + VEL_RISE
 
   // Live, debug-editable copies of each guard's LOW/HIGH band. Default to the
   // constants above; the number inputs (visible only in debug mode) update
@@ -633,9 +636,9 @@
   const accGl = { v: 1 }, sjerkGl = { v: 1 }, ajerkGl = { v: 1 },
         decelGl = { v: 1 }, angAccGl = { v: 1 };
   let curSmoothV = CUR_SMOOTH;
-  let settleSpeedV = SETTLE_SPEED, trackStiffV = TRACK_STIFF,
+  let trackStiffV = TRACK_STIFF,
       anchorStiffV = ANCHOR_STIFF, dampStiffV = DAMP_STIFF;
-  let settleFloorV = SETTLE_FLOOR, gateSmoothV = GATE_SMOOTH;
+  let velDropV = VEL_DROP, velRiseV = VEL_RISE, velSmoothV = VEL_DET_SMOOTH;
   let accSmoothV = ACC_SMOOTH;       // EMA factor for accel magnitude (debug-editable)
   let sjerkSmoothV = JERK_SMOOTH;    // EMA factor for signed jerk
   let ajerkSmoothV = ABSJERK_SMOOTH; // EMA factor for the rectified-jerk envelope
@@ -684,25 +687,25 @@
   bindThreshold("decelHighInput", DECEL_HIGH, (v) => { decelHighV = v; });
   bindThreshold("angAccLowInput", ANGACC_LOW, (v) => { angAccLowV = v; });
   bindThreshold("angAccHighInput", ANGACC_HIGH, (v) => { angAccHighV = v; });
-  bindThreshold("settleSpeedInput", SETTLE_SPEED, (v) => { settleSpeedV = v; });
   bindThreshold("trackStiffInput", TRACK_STIFF, (v) => { trackStiffV = v; });
   bindThreshold("anchorStiffInput", ANCHOR_STIFF, (v) => { anchorStiffV = v; });
   bindThreshold("dampStiffInput", DAMP_STIFF, (v) => { dampStiffV = v; });
-  bindThreshold("settleFloorInput", SETTLE_FLOOR, (v) => { settleFloorV = v; });
-  bindThreshold("gateSmoothInput", GATE_SMOOTH, (v) => { gateSmoothV = v; });
+  bindThreshold("dropInput", VEL_DROP, (v) => { velDropV = v; });
+  bindThreshold("riseInput", VEL_RISE, (v) => { velRiseV = v; });
+  bindThreshold("vsmoothInput", VEL_DET_SMOOTH, (v) => { velSmoothV = v; });
 
   // Inertial-settle presets, spanning the damping spectrum (damp = 2*sqrt(track)*zeta):
   //   Soft = overdamped (zeta~1.1), smoothest/most jitter-rejecting, slow aim
   //   Calm = critical (zeta=1.0), fastest approach with no overshoot
   //   Snap = underdamped (zeta=0.7), lively with a small predictive overshoot
-  // Each writes the four inputs and fires their `input` event to update the live values.
+  // Each writes the spring inputs and fires their `input` event to update the live values.
   const settlePresets = {
-    soft: { settleSpeedInput: 1.0, trackStiffInput: 1000, anchorStiffInput: 1, dampStiffInput: 70 },
-    calm: { settleSpeedInput: 1.0, trackStiffInput: 1600, anchorStiffInput: 1, dampStiffInput: 80 },
-    snap: { settleSpeedInput: 1.0, trackStiffInput: 2500, anchorStiffInput: 1, dampStiffInput: 70 },
+    soft: { trackStiffInput: 1000, anchorStiffInput: 1, dampStiffInput: 70 },
+    calm: { trackStiffInput: 1600, anchorStiffInput: 1, dampStiffInput: 80 },
+    snap: { trackStiffInput: 2500, anchorStiffInput: 1, dampStiffInput: 70 },
   };
   const presetBtns = document.querySelectorAll(".presets button[data-preset]");
-  const settleInputIds = ["settleSpeedInput", "trackStiffInput", "anchorStiffInput", "dampStiffInput"];
+  const settleInputIds = ["trackStiffInput", "anchorStiffInput", "dampStiffInput"];
   // Highlight the button whose preset matches the current inputs (none if a value
   // was hand-tuned away from every preset).
   function refreshPresetHighlight() {
@@ -792,7 +795,10 @@
   // --- ANGULAR / ROTATIONAL motion, derived from DeviceOrientation (NOT the
   // accelerometer): how the orientation vector is turning. ---
   let angSpeed = 0;              // smoothed angular speed (rad/s) of the orientation vector
-  let gateVel = 0;              // heavier-smoothed angular speed; feeds the deadband drive gate
+  let detVel = 0;               // (re)smoothed angular speed feeding the FAST/SLOW peak-detector
+  let velPeak = 0;              // running peak of detVel since the last re-arm
+  let velValley = 0;            // running valley of detVel since entering SLOW
+  let settleFast = false;       // peak-detector state: true = FAST (track), false = SLOW (coast)
   let angDecel = 0;              // smoothed angular deceleration (rad/s^2): rectified -d(angSpeed)/dt
   let angAccel = 0;              // smoothed angular acceleration (rad/s^2): rectified +d(angSpeed)/dt
   let angAxis = [0, 0, 1];       // axis the vector is rotating about
@@ -864,9 +870,22 @@
         const instSpeed = angle / dt;
         const prevSpeed = angSpeed;
         angSpeed += (instSpeed - angSpeed) * VEL_SMOOTH;
-        // Heavier-smoothed copy feeding the drive-gate deadband (stabler rest
-        // level than angSpeed, which stays responsive for the prediction).
-        gateVel += (angSpeed - gateVel) * (debugOn ? gateSmoothV : GATE_SMOOTH);
+        // Detector velocity: a (re)smoothed copy of angSpeed feeding the FAST/SLOW
+        // peak-detector. vsmooth = 1.0 makes it follow angSpeed raw (for A/B);
+        // lower smooths shake reversals (speed dips to ~0 each cycle).
+        detVel += (angSpeed - detVel) * (debugOn ? velSmoothV : VEL_DET_SMOOTH);
+        // Peak/valley state machine: FAST while detVel climbs/holds at its peak;
+        // SLOW once it falls below VEL_DROP of the peak (movement winding down,
+        // latched to rest); re-arm FAST when it rises VEL_RISE above its valley.
+        const dropFrac = debugOn ? velDropV : VEL_DROP;
+        const riseAbs = debugOn ? velRiseV : VEL_RISE;
+        if (settleFast) {
+          if (detVel > velPeak) velPeak = detVel;
+          else if (detVel < velPeak * dropFrac) { settleFast = false; velValley = detVel; }
+        } else {
+          if (detVel < velValley) velValley = detVel;
+          if (detVel > velValley + riseAbs) { settleFast = true; velPeak = detVel; }
+        }
         // Angular deceleration (rad/s^2), rectified to the slowing-down part
         // only and EMA-smoothed; drives the Angular decel guard.
         const decel = Math.max(0, (prevSpeed - angSpeed) / dt);
@@ -923,7 +942,7 @@
 
   // --- Debug overlay ----------------------------------------------------
   // Values computed inside frame() that the overlay needs to read back.
-  const dbg = { damp: 1, targetDamp: 1, accDamp: 1, sJerkDamp: 1, aJerkDamp: 1, decelDamp: 1, drive: 1, gate: 0, predAngle: 0, fps: 0, oriHz: 0, motHz: 0 };
+  const dbg = { damp: 1, targetDamp: 1, accDamp: 1, sJerkDamp: 1, aJerkDamp: 1, decelDamp: 1, drive: 1, vel: 0, peak: 0, predAngle: 0, fps: 0, oriHz: 0, motHz: 0 };
 
   // Each metric: a live accessor, a bar range, and a formatter. `bip` draws a
   // bipolar bar growing out from the center; `ticks` marks thresholds (accel).
@@ -953,9 +972,10 @@
       color: (v) => v >= decelHighV ? "#ff5b5b" : (v >= decelLowV ? "#ff9b3b" : "#5b9bff"),
       fmt: (v) => v.toFixed(1) },
     { label: "drive",   get: () => dbg.drive,     min: 0, max: 1, enabled: () => inertia, fmt: (v) => v.toFixed(2) },
-    { label: "gate",    get: () => dbg.gate,      min: 0, max: 3, enabled: () => inertia,
-      ticks: [{ at: () => settleFloorV, color: "#ff9b3b", dashed: true }],
-      color: (v) => v >= settleFloorV ? "#5b9bff" : "rgba(255,255,255,0.3)",
+    { label: "vel",     get: () => dbg.vel,       min: 0, max: 6, enabled: () => inertia,
+      ticks: [{ at: () => dbg.peak, color: "#5bff9b" },
+              { at: () => dbg.peak * velDropV, color: "#ff9b3b", dashed: true }],
+      color: () => settleFast ? "#5b9bff" : "rgba(255,255,255,0.4)",
       fmt: (v) => v.toFixed(2) },
     { label: "lag ms",  get: () => trackStiffV > 0 ? 1000 * dampStiffV / trackStiffV : 0,
       min: 0, max: 120, enabled: () => leadComp && inertia, fmt: (v) => v.toFixed(0) },
@@ -1105,7 +1125,10 @@
 
     // If readings have stopped arriving (device held still), relax the
     // velocity so the prediction doesn't keep drifting.
-    if (now - prevMeasTime > STALE_MS) { angSpeed = 0; angDecel = 0; }
+    if (now - prevMeasTime > STALE_MS) {
+      angSpeed = 0; angDecel = 0;
+      detVel = 0; velPeak = 0; velValley = 0; settleFast = false; // reset detector to SLOW
+    }
 
     // Predict the orientation LEAD_MS ahead from angular velocity. (An
     // acceleration term was dropped: a 2nd derivative of low-rate, quantized
@@ -1182,26 +1205,21 @@
     // Target the prediction when on; otherwise the raw reading (pre-update).
     const target = prediction ? rotateAround(measVec, angAxis, predAngle) : measVec;
 
-    // Inertial settle: `cur` carries its own velocity. A speed-gated strong
-    // spring tracks the (lead-predicted) target while the phone is moving; as
-    // measured speed falls to zero that drive fades out and `cur` coasts to
-    // rest under damping — settling naturally instead of chasing the ringing
-    // reading. A weak always-on spring pulls `cur` back to the true measured
-    // vector over seconds, killing the drift the coast would otherwise leave.
+    // Inertial settle: `cur` carries its own velocity. The velocity peak-detector
+    // gates the strong tracking spring: FAST (drive 1) tracks the (lead-predicted)
+    // target while a movement builds/holds; once velocity falls off its peak the
+    // detector flips SLOW (drive 0) and `cur` coasts to rest under damping —
+    // settling naturally instead of chasing the ringing reading. A weak always-on
+    // spring pulls `cur` back to the true measured vector over seconds, killing
+    // the drift the coast would otherwise leave.
     // Semi-implicit (symplectic) Euler: update velocity, then position.
-    let driveDbg = 1, gateDbg = 0;
+    let driveDbg = 1, velDbg = 0, peakDbg = 0;
     if (inertia && prediction) {
-      // Drive gate with a noise-floor deadband: below `floor` (rest jitter) the
-      // smoothed gate signal yields drive 0 so the stiff spring fully releases
-      // and `cur` coasts to rest under damping (the weak anchor re-centers);
-      // above it any real motion (slow/fast/shake all exceed the floor)
-      // saturates the drive over `speed`, so tracking is fully preserved.
-      let drive = settleSpeedV > 0 ? (gateVel - settleFloorV) / settleSpeedV
-                                   : (gateVel > settleFloorV ? 1 : 0);
-      if (drive < 0) drive = 0; else if (drive > 1) drive = 1;
+      const drive = settleFast ? 1 : 0; // FAST = full tracking, SLOW = release/coast
       driveDbg = drive;
-      gateDbg = gateVel;
-      const kTrack  = trackStiffV * drive; // strong, gated off at rest
+      velDbg = detVel;
+      peakDbg = velPeak;
+      const kTrack  = trackStiffV * drive; // strong, gated off when settling
       const kAnchor = anchorStiffV;        // weak, always on
       const c       = dampStiffV;
       for (let i = 0; i < 3; i++) {
@@ -1260,7 +1278,8 @@
       dbg.aJerkDamp = aJerkDamp;
       dbg.decelDamp = decelDamp;
       dbg.drive = driveDbg;
-      dbg.gate = gateDbg;
+      dbg.vel = velDbg;
+      dbg.peak = peakDbg;
       dbg.predAngle = predAngle;
       if (frameDt > 0) dbg.fps += (1 / frameDt - dbg.fps) * 0.1;
       updateDebug();
