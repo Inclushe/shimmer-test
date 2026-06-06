@@ -336,21 +336,20 @@
     <div class="opt">
       <label><input type="checkbox" id="inertiaCheck" checked /> Inertial settle</label>
       <div class="thresh">
-        <div class="field"><span>track</span><input type="number" id="trackStiffInput" step="10" /></div>
+        <div class="field"><span>lead ms</span><input type="number" id="leadTimeInput" step="5" /></div>
         <div class="field"><span>anchor</span><input type="number" id="anchorStiffInput" step="0.5" /></div>
-        <div class="field"><span>damp</span><input type="number" id="dampStiffInput" step="1" /></div>
+        <div class="field"><span>damp ms</span><input type="number" id="dampStiffInput" step="10" /></div>
         <div class="field"><span>drop</span><input type="number" id="dropInput" step="0.05" min="0" max="1" /></div>
         <div class="field"><span>rise</span><input type="number" id="riseInput" step="0.05" /></div>
         <div class="field"><span>vsmooth</span><input type="number" id="vsmoothInput" step="0.05" min="0" max="1" /></div>
       </div>
       <div class="presets">
-        <button type="button" data-preset="soft">Soft</button>
-        <button type="button" data-preset="calm">Calm</button>
-        <button type="button" data-preset="snap">Snap</button>
+        <button type="button" data-preset="direct">Direct</button>
+        <button type="button" data-preset="damped">Damped</button>
       </div>
     </div>
     <div class="opt">
-      <label><input type="checkbox" id="leadCompCheck" checked /> Lead compensation</label>
+      <label><input type="checkbox" id="leadHoldCheck" checked /> Hold lead (settle to led point)</label>
     </div>
     <div class="opt">
       <label><input type="checkbox" id="smoothCheck" checked /> Smoothing</label>
@@ -414,7 +413,7 @@
   const decelCheck = document.getElementById("decelCheck");
   const angAccelCheck = document.getElementById("angAccelCheck");
   const inertiaCheck = document.getElementById("inertiaCheck");
-  const leadCompCheck = document.getElementById("leadCompCheck");
+  const leadHoldCheck = document.getElementById("leadHoldCheck");
 
   // Smoothing: when off, snap to the target instead of easing toward it.
   // Orientation mode (see the segmented toggle below): "Predicted" extrapolates
@@ -441,7 +440,7 @@
   let decelGuard = true;   // idea 1: damp prediction during abrupt deceleration
   let angAccelGuard = false; // damp prediction during abrupt rotation onset (off: it opposes snappy onset)
   let inertia = true;      // inertial settle: cur coasts to rest, weak anchor to truth
-  let leadComp = true;     // extend the lead by the spring's damp/track lag so net = LEAD_MS
+  let leadHold = true;     // settle toward the velocity-led point so the lead persists (vs raw truth)
   // Per-guard glide enables (default on).
   let accGlide = true, sjerkGlide = true, ajerkGlide = true,
       decelGlide = true, angAccGlide = true;
@@ -452,7 +451,7 @@
   decelCheck.addEventListener("change", () => { decelGuard = decelCheck.checked; });
   angAccelCheck.addEventListener("change", () => { angAccelGuard = angAccelCheck.checked; });
   inertiaCheck.addEventListener("change", () => { inertia = inertiaCheck.checked; });
-  leadCompCheck.addEventListener("change", () => { leadComp = leadCompCheck.checked; });
+  leadHoldCheck.addEventListener("change", () => { leadHold = leadHoldCheck.checked; });
   // Glide pill toggles (one per guard + dynamic speed): flip the .active class
   // and the backing flag on click. Seeded active in the markup (all default on).
   function bindGlideBtn(id, set) {
@@ -485,7 +484,7 @@
     { box: decelCheck,  set: (v) => { decelGuard = v; } },
     { box: angAccelCheck, set: (v) => { angAccelGuard = v; } },
     { box: inertiaCheck, set: (v) => { inertia = v; } },
-    { box: leadCompCheck, set: (v) => { leadComp = v; } },
+    { box: leadHoldCheck, set: (v) => { leadHold = v; } },
     { box: smoothCheck, set: (v) => { smoothing = v; } },
   ];
   function setMode(predicted) {
@@ -596,20 +595,19 @@
   const ANGACC_HIGH = 30;        // above this the prediction is fully damped
   const ANGACC_SMOOTH = 0.2;     // EMA factor for the angular-acceleration signal
 
-  // Inertial settle: `cur` carries its own velocity. A FAST/SLOW velocity
-  // peak-detector gates a strong tracking spring: FAST (drive 1) tracks the
-  // prediction while a movement is building/held; once velocity falls off its
-  // peak it goes SLOW (drive 0) and `cur` coasts to a stop under DAMP_STIFF. A
-  // weak always-on spring (ANCHOR_STIFF) re-centers `cur` on the true measured
-  // vector over seconds to kill drift.
-  const TRACK_STIFF  = 2500;     // 1/s^2; strong tracking spring (gated FAST/SLOW)
-  const ANCHOR_STIFF = 1;        // 1/s^2; weak constant spring toward measVec (drift correction)
-  const DAMP_STIFF   = 70;       // 1/s; velocity damping. damp = 2*sqrt(track)*zeta; zeta=0.7
-                                 // here is slightly underdamped so the predAngle lead reads as a
-                                 // small overshoot. Spring lag ~2*zeta/sqrt(track) (~28ms) < 90ms
-                                 // lead, so cur leads the raw sensor by ~62ms. (The dt clamp in
-                                 // frame() keeps the explicit integrators under their stability
-                                 // bound, so damp can exceed 2/dt at low frame rates.)
+  // Velocity-coupled settle: `cur` is PACED by the motion's angular velocity
+  // (rotated each frame by angSpeed*dt about angAxis) instead of pulled by a
+  // strong position spring. The predictive lead is a velocity-scaled angle
+  // (angSpeed*leadTime, = predAngle). A weak always-on "anchor" provides drift
+  // correction / at-rest convergence. Two A/B axes (see frame()): onset style
+  // (Direct = instant rate-match, Damped = eased follow-speed) selected by the
+  // Direct/Damped presets, and lead-hold (Hold = anchor aims at the led point so
+  // the lead persists; Raw = anchor aims at raw truth + lead injected at onset so
+  // it fades) toggled by the "Hold lead" checkbox.
+  const ANCHOR_DIRECT = 6;       // 1/s; weak settle toward truth/led point (Direct preset, snappier)
+  const ANCHOR_DAMPED = 3;       // 1/s; gentler settle (Damped preset)
+  const FOLLOW_TC_MS  = 120;     // ms; Damped-mode follow-speed time constant (the `damp ms` field)
+  const SETTLE_MODE   = 'direct';// default onset style: 'direct' | 'damped'
   // Velocity peak-detector: FAST while the detector velocity climbs/holds at its
   // peak; SLOW once it falls below VEL_DROP of the peak (a movement winding down,
   // latched through to rest); re-arm FAST when it rises VEL_RISE above its valley
@@ -636,8 +634,10 @@
   const accGl = { v: 1 }, sjerkGl = { v: 1 }, ajerkGl = { v: 1 },
         decelGl = { v: 1 }, angAccGl = { v: 1 };
   let curSmoothV = CUR_SMOOTH;
-  let trackStiffV = TRACK_STIFF,
-      anchorStiffV = ANCHOR_STIFF, dampStiffV = DAMP_STIFF;
+  let leadTimeV = LEAD_MS / 1000,    // seconds; predictive lead time (the `lead ms` field)
+      anchorV = ANCHOR_DIRECT,       // 1/s; weak settle factor (the `anchor` field)
+      followTcV = FOLLOW_TC_MS;      // ms; Damped follow-speed time constant (the `damp ms` field)
+  let settleMode = SETTLE_MODE;      // 'direct' | 'damped'; onset style, set by the presets
   let velDropV = VEL_DROP, velRiseV = VEL_RISE, velSmoothV = VEL_DET_SMOOTH;
   let accSmoothV = ACC_SMOOTH;       // EMA factor for accel magnitude (debug-editable)
   let sjerkSmoothV = JERK_SMOOTH;    // EMA factor for signed jerk
@@ -687,31 +687,31 @@
   bindThreshold("decelHighInput", DECEL_HIGH, (v) => { decelHighV = v; });
   bindThreshold("angAccLowInput", ANGACC_LOW, (v) => { angAccLowV = v; });
   bindThreshold("angAccHighInput", ANGACC_HIGH, (v) => { angAccHighV = v; });
-  bindThreshold("trackStiffInput", TRACK_STIFF, (v) => { trackStiffV = v; });
-  bindThreshold("anchorStiffInput", ANCHOR_STIFF, (v) => { anchorStiffV = v; });
-  bindThreshold("dampStiffInput", DAMP_STIFF, (v) => { dampStiffV = v; });
+  bindThreshold("leadTimeInput", LEAD_MS, (v) => { leadTimeV = v / 1000; }); // ms -> s
+  bindThreshold("anchorStiffInput", ANCHOR_DIRECT, (v) => { anchorV = v; });
+  bindThreshold("dampStiffInput", FOLLOW_TC_MS, (v) => { followTcV = v; });
   bindThreshold("dropInput", VEL_DROP, (v) => { velDropV = v; });
   bindThreshold("riseInput", VEL_RISE, (v) => { velRiseV = v; });
   bindThreshold("vsmoothInput", VEL_DET_SMOOTH, (v) => { velSmoothV = v; });
 
-  // Inertial-settle presets, spanning the damping spectrum (damp = 2*sqrt(track)*zeta):
-  //   Soft = overdamped (zeta~1.1), smoothest/most jitter-rejecting, slow aim
-  //   Calm = critical (zeta=1.0), fastest approach with no overshoot
-  //   Snap = underdamped (zeta=0.7), lively with a small predictive overshoot
-  // Each writes the spring inputs and fires their `input` event to update the live values.
+  // Settle presets: each bundles an onset style (`mode`) and its own settle
+  // factor (`anchor`), so the two differ at both the start and end of a motion.
+  //   Direct = instant rate-match onset, snappier anchor.
+  //   Damped = eased follow-speed onset (damp ms = its time constant), gentler anchor.
+  // Each writes the numeric inputs (firing `input` to update the live *V vars) and
+  // sets `settleMode` directly (it has no input field).
   const settlePresets = {
-    soft: { trackStiffInput: 1000, anchorStiffInput: 1, dampStiffInput: 70 },
-    calm: { trackStiffInput: 1600, anchorStiffInput: 1, dampStiffInput: 80 },
-    snap: { trackStiffInput: 2500, anchorStiffInput: 1, dampStiffInput: 70 },
+    direct: { mode: 'direct', leadTimeInput: LEAD_MS, anchorStiffInput: ANCHOR_DIRECT, dampStiffInput: FOLLOW_TC_MS },
+    damped: { mode: 'damped', leadTimeInput: LEAD_MS, anchorStiffInput: ANCHOR_DAMPED, dampStiffInput: 160 },
   };
   const presetBtns = document.querySelectorAll(".presets button[data-preset]");
-  const settleInputIds = ["trackStiffInput", "anchorStiffInput", "dampStiffInput"];
-  // Highlight the button whose preset matches the current inputs (none if a value
-  // was hand-tuned away from every preset).
+  const settleInputIds = ["leadTimeInput", "anchorStiffInput", "dampStiffInput"];
+  // Highlight the button whose preset matches the current mode + inputs (none if a
+  // value was hand-tuned away from every preset).
   function refreshPresetHighlight() {
     presetBtns.forEach((btn) => {
       const p = settlePresets[btn.dataset.preset];
-      const match = p && settleInputIds.every(
+      const match = p && p.mode === settleMode && settleInputIds.every(
         (id) => parseFloat(document.getElementById(id).value) === p[id]);
       btn.classList.toggle("active", !!match);
     });
@@ -720,7 +720,10 @@
     btn.addEventListener("click", () => {
       const p = settlePresets[btn.dataset.preset];
       if (!p) return;
-      for (const id in p) {
+      settleMode = p.mode;                  // non-numeric onset style, applied directly
+      followSpeed = 0;                      // reset the eased follow on a mode switch
+      prevLeadAngle = angSpeed * leadTimeV; // re-sync so the next FAST frame has a clean leadDelta
+      for (const id of settleInputIds) {    // skip the `mode` key (not an input)
         const el = document.getElementById(id);
         el.value = p[id];
         el.dispatchEvent(new Event("input")); // reuse bindThreshold's listener to update the *V var
@@ -786,8 +789,10 @@
   // Current device orientation as a unit vector: the image of the screen
   // normal [0,0,1] under the device's rotation.
   let cur = [0, 0, 1];           // rendered (predicted) vector
-  let curVel = [0, 0, 0];        // velocity of `cur` (per second); integrated by inertial settle
+  let curVel = [0, 0, 0];        // vestigial (old position-spring velocity); no longer integrated
   let measVec = [0, 0, 1];       // latest measured vector
+  let prevLeadAngle = 0;         // last frame's lead angle (rad), for the differential lead injection
+  let followSpeed = 0;           // eased follow-speed (rad/s) for Damped onset; 0 = frozen (SLOW)
 
   // Angular-velocity tracking, used to extrapolate `measVec` forward.
   let prevMeas = null;           // previous measured vector
@@ -977,8 +982,8 @@
               { at: () => dbg.peak * velDropV, color: "#ff9b3b", dashed: true }],
       color: () => settleFast ? "#5b9bff" : "rgba(255,255,255,0.4)",
       fmt: (v) => v.toFixed(2) },
-    { label: "lag ms",  get: () => trackStiffV > 0 ? 1000 * dampStiffV / trackStiffV : 0,
-      min: 0, max: 120, enabled: () => leadComp && inertia, fmt: (v) => v.toFixed(0) },
+    { label: "lead ms", get: () => leadTimeV * 1000,
+      min: 0, max: 120, enabled: () => inertia, fmt: (v) => v.toFixed(0) },
     { label: "tgtDamp", get: () => dbg.targetDamp, min: 0, max: 1, fmt: (v) => v.toFixed(2) },
     { label: "damp",    get: () => dbg.damp,      min: 0, max: 1, fmt: (v) => v.toFixed(2) },
     { label: "predAng", get: () => dbg.predAngle, min: -MAX_LEAD_ANGLE, max: MAX_LEAD_ANGLE, bip: true, fmt: (v) => v.toFixed(3) },
@@ -1128,20 +1133,17 @@
     if (now - prevMeasTime > STALE_MS) {
       angSpeed = 0; angDecel = 0;
       detVel = 0; velPeak = 0; velValley = 0; settleFast = false; // reset detector to SLOW
+      followSpeed = 0; prevLeadAngle = 0; // neutralize the velocity follow + lead
     }
 
     // Predict the orientation LEAD_MS ahead from angular velocity. (An
     // acceleration term was dropped: a 2nd derivative of low-rate, quantized
     // orientation is noise-dominated — amplified ~1/dt² — and flickered the
     // prediction frame-to-frame.)
-    // Lead compensation: the inertial-settle spring lags its target by exactly
-    // damp/track seconds, eating into the lead. Pre-pay for that known lag by
-    // extending the lead, so the *displayed* result lands the full LEAD_MS
-    // ahead. Self-correcting: derived live from the spring's own constants.
-    let lead = LEAD_MS / 1000;
-    if (leadComp && inertia) {
-      if (trackStiffV > 0) lead += dampStiffV / trackStiffV;
-    }
+    // The velocity-coupled settle paces `cur` by the motion's own velocity, so
+    // there's no spring lag to pre-pay: the lead is just the velocity-scaled
+    // angle over the user's lead time.
+    let lead = leadTimeV;
     let predAngle = angSpeed * lead;
     if (predAngle > MAX_LEAD_ANGLE) predAngle = MAX_LEAD_ANGLE;
     else if (predAngle < -MAX_LEAD_ANGLE) predAngle = -MAX_LEAD_ANGLE;
@@ -1205,30 +1207,47 @@
     // Target the prediction when on; otherwise the raw reading (pre-update).
     const target = prediction ? rotateAround(measVec, angAxis, predAngle) : measVec;
 
-    // Inertial settle: `cur` carries its own velocity. The velocity peak-detector
-    // gates the strong tracking spring: FAST (drive 1) tracks the (lead-predicted)
-    // target while a movement builds/holds; once velocity falls off its peak the
-    // detector flips SLOW (drive 0) and `cur` coasts to rest under damping —
-    // settling naturally instead of chasing the ringing reading. A weak always-on
-    // spring pulls `cur` back to the true measured vector over seconds, killing
-    // the drift the coast would otherwise leave.
-    // Semi-implicit (symplectic) Euler: update velocity, then position.
+    // Velocity-coupled settle: while a movement builds/holds (FAST), `cur` is
+    // paced by the motion's own angular velocity (rotated about angAxis), so it
+    // follows the rotation rate rather than being yanked toward a target
+    // position. The predictive lead rides on top. Once the detector flips SLOW
+    // the follow freezes on a dime and only a weak always-on "anchor" moves
+    // `cur`, settling it onto truth — killing the end-of-motion ring/drift.
     let driveDbg = 1, velDbg = 0, peakDbg = 0;
     if (inertia && prediction) {
-      const drive = settleFast ? 1 : 0; // FAST = full tracking, SLOW = release/coast
-      driveDbg = drive;
+      driveDbg = settleFast ? 1 : 0;
       velDbg = detVel;
       peakDbg = velPeak;
-      const kTrack  = trackStiffV * drive; // strong, gated off when settling
-      const kAnchor = anchorStiffV;        // weak, always on
-      const c       = dampStiffV;
-      for (let i = 0; i < 3; i++) {
-        const accel = kTrack * (target[i] - cur[i])
-                    + kAnchor * (measVec[i] - cur[i])
-                    - c * curVel[i];
-        curVel[i] += accel * frameDt;
-        cur[i]    += curVel[i] * frameDt;
+      const leadAngle = predAngle; // velocity-scaled, guard-damped, clamped lead
+
+      if (settleFast) {            // pace cur by the motion's velocity
+        let baseAngle;
+        if (settleMode === 'damped') {
+          const kFollow = 1 - Math.exp(-frameDt / (followTcV / 1000));
+          followSpeed += (angSpeed - followSpeed) * kFollow;
+          baseAngle = followSpeed * frameDt; // eased onset
+        } else {
+          followSpeed = angSpeed;            // kept synced for a clean mode-switch
+          baseAngle = angSpeed * frameDt;    // instant rate-match
+        }
+        // Raw mode injects the lead differentially at onset (the anchor toward
+        // raw truth then erodes it). Hold mode lets the anchor (aimed at the led
+        // `target` below) carry the standing lead instead.
+        const rot = baseAngle + (leadHold ? 0 : (leadAngle - prevLeadAngle));
+        cur = rotateAround(cur, angAxis, rot);
+      } else {
+        followSpeed = 0;           // SLOW: stop the follow on a dime
       }
+
+      // Weak settle: Hold -> velocity-led point (lead persists through a turn);
+      // Raw -> raw truth (lead fades / unwinds). The only absolute coupling.
+      const st = leadHold ? target : measVec;
+      const a = anchorV * frameDt;
+      cur[0] += a * (st[0] - cur[0]);
+      cur[1] += a * (st[1] - cur[1]);
+      cur[2] += a * (st[2] - cur[2]);
+
+      prevLeadAngle = leadAngle;   // tracked every frame (FAST & SLOW) -> no pop on re-arm
     } else {
       // Original easing path (prediction off, or inertial settle disabled).
       // Ease toward the target; snap if smoothing is off. With prediction off
