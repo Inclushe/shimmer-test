@@ -82,11 +82,13 @@
   }
   #toggles input[type="checkbox"] { width: 16px; height: 16px; accent-color: #fff; cursor: pointer; }
   #densityRow, #sizeRow { gap: 10px; }
-  #densityRow input[type="range"], #sizeRow input[type="range"] { width: 110px; accent-color: #fff; cursor: pointer; }
+  #densityRow input[type="range"], #sizeRow input[type="range"], #leadHoldRow input[type="range"] { width: 110px; accent-color: #fff; cursor: pointer; }
 
   /* Disabled toggles in Raw Sensor mode */
   #toggles label.disabled { opacity: 0.4; cursor: not-allowed; }
   #toggles label.disabled input { cursor: not-allowed; }
+  #toggles .opt.disabled { opacity: 0.4; }
+  #toggles .opt.disabled input { cursor: not-allowed; }
   .thresh.disabled { opacity: 0.4; }
   .thresh.disabled input { cursor: not-allowed; }
 
@@ -351,8 +353,9 @@
     <div class="opt">
       <label><input type="checkbox" id="gatePredCheck" /> Gate on predicted velocity</label>
     </div>
-    <div class="opt">
-      <label><input type="checkbox" id="leadHoldCheck" checked /> Hold lead (settle to led point)</label>
+    <div class="opt" id="leadHoldRow">
+      <label for="leadHoldInput">Lead hold <span id="leadHoldVal">1.00</span></label>
+      <input type="range" id="leadHoldInput" min="0" max="1" step="0.05" value="1" />
     </div>
     <div class="opt">
       <label><input type="checkbox" id="ringCheck" /> Spring settle (overshoot)</label>
@@ -423,7 +426,8 @@
   const decelCheck = document.getElementById("decelCheck");
   const angAccelCheck = document.getElementById("angAccelCheck");
   const inertiaCheck = document.getElementById("inertiaCheck");
-  const leadHoldCheck = document.getElementById("leadHoldCheck");
+  const leadHoldInput = document.getElementById("leadHoldInput");
+  const leadHoldVal = document.getElementById("leadHoldVal");
   const ringCheck = document.getElementById("ringCheck");
   const gatePredCheck = document.getElementById("gatePredCheck");
 
@@ -452,7 +456,8 @@
   let decelGuard = true;   // idea 1: damp prediction during abrupt deceleration
   let angAccelGuard = false; // damp prediction during abrupt rotation onset (off: it opposes snappy onset)
   let inertia = true;      // inertial settle: cur coasts to rest, weak anchor to truth
-  let leadHold = true;     // settle toward the velocity-led point so the lead persists (vs raw truth)
+  let leadHoldFracV = 1;   // 0..1: standing-lead fraction. 1 = full Hold (settle to led point);
+                           // 0 = Raw (settle to truth + differential injection, lead fades).
   let ring = false;        // settle via a 2nd-order underdamped spring (overshoot/ring) vs first-order ease
   let gatePredicted = false; // FAST/SLOW gate uses predicted (lead-extrapolated) velocity vs measured
   // Per-guard glide enables (default on).
@@ -465,7 +470,10 @@
   decelCheck.addEventListener("change", () => { decelGuard = decelCheck.checked; });
   angAccelCheck.addEventListener("change", () => { angAccelGuard = angAccelCheck.checked; });
   inertiaCheck.addEventListener("change", () => { inertia = inertiaCheck.checked; });
-  leadHoldCheck.addEventListener("change", () => { leadHold = leadHoldCheck.checked; });
+  leadHoldInput.addEventListener("input", () => {
+    leadHoldFracV = +leadHoldInput.value;
+    leadHoldVal.textContent = leadHoldFracV.toFixed(2);
+  });
   ringCheck.addEventListener("change", () => {
     ring = ringCheck.checked;
     if (!ring) { curVel[0] = curVel[1] = curVel[2] = 0; } // drop stale spring velocity
@@ -503,7 +511,6 @@
     { box: decelCheck,  set: (v) => { decelGuard = v; } },
     { box: angAccelCheck, set: (v) => { angAccelGuard = v; } },
     { box: inertiaCheck, set: (v) => { inertia = v; } },
-    { box: leadHoldCheck, set: (v) => { leadHold = v; } },
     { box: ringCheck, set: (v) => { ring = v; } },
     { box: gatePredCheck, set: (v) => { gatePredicted = v; } },
     { box: smoothCheck, set: (v) => { smoothing = v; } },
@@ -522,6 +529,9 @@
       // Force false in raw mode; restore the remembered checkbox value otherwise.
       c.set(predicted ? c.box.checked : false);
     }
+    // Lead-hold slider isn't a guarded checkbox: grey it out in raw mode too.
+    leadHoldInput.disabled = !predicted;
+    leadHoldInput.closest(".opt").classList.toggle("disabled", !predicted);
     modeOpts.forEach((o) => o.classList.toggle("active", (o.dataset.mode === "predicted") === predicted));
   }
   modeOpts.forEach((o) => o.addEventListener("click", () => setMode(o.dataset.mode === "predicted")));
@@ -1297,18 +1307,21 @@
           followSpeed = angSpeed;            // kept synced for a clean mode-switch
           baseAngle = angSpeed * frameDt;    // instant rate-match
         }
-        // Raw mode injects the lead differentially at onset (the anchor toward
-        // raw truth then erodes it). Hold mode lets the anchor (aimed at the led
-        // `target` below) carry the standing lead instead.
-        const rot = baseAngle + (leadHold ? 0 : (leadAngle - prevLeadAngle));
+        // Differential lead injection, scaled by (1 - leadHold): at leadHold 0
+        // (Raw) the full leadDelta is injected at onset and the settle below aims
+        // at raw truth, so the lead fades; at leadHold 1 (full Hold) there's no
+        // injection and the settle carries a standing lead. Intermediate blends.
+        const rot = baseAngle + (1 - leadHoldFracV) * (leadAngle - prevLeadAngle);
         cur = rotateAround(cur, angAxis, rot);
       } else {
         followSpeed = 0;           // SLOW: stop the follow on a dime
       }
 
-      // Settle toward `st`: Hold -> velocity-led point (lead persists through a
-      // turn); Raw -> raw truth (lead fades / unwinds). The only absolute coupling.
-      const st = leadHold ? target : measVec;
+      // Settle target `st`: a fractional point along the lead arc set by the
+      // leadHold slider -- measVec at 0 (Raw, settle to truth), the full led point
+      // (`target`) at 1 (Hold, standing lead), or anywhere between. The standing
+      // lead at steady state equals leadHoldFracV (injection contributes 0 there).
+      const st = rotateAround(measVec, angAxis, predAngle * leadHoldFracV);
       if (ring) {
         // 2nd-order underdamped spring toward `st`: `cur` carries velocity, so it
         // overshoots and rings at the stop (the old "Snap" feel). On top of it a
