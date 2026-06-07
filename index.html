@@ -1234,12 +1234,16 @@
         cur = rotateAround(cur, angAxis, angSpeed * frameDt);
       }
 
-      // Underdamped spring toward the led target + weak anchor to truth.
-      // Semi-implicit (symplectic) Euler: update velocity, then position.
-      const k = springStiffV;
-      const c = 2 * Math.sqrt(k) * springZetaV;
+      // Spring settle. FAST: a strong spring pulls cur toward the led `target`
+      // (alongside the velocity-follow above) for tight, lead-carrying tracking.
+      // SLOW: the strong term is gated OFF, so only the weak `anchor` toward raw
+      // truth is left and cur coasts/settles to rest under it (main's behaviour).
+      // Damping is derived from whichever stiffness is active, so the damping
+      // ratio stays `zeta` in both states. Semi-implicit (symplectic) Euler.
+      const kStrong = settleFast ? springStiffV : 0; // led-target spring, gated off at SLOW
+      const c = 2 * Math.sqrt(kStrong + anchorV) * springZetaV;
       for (let i = 0; i < 3; i++) {
-        const accel = k * (target[i] - cur[i])
+        const accel = kStrong * (target[i] - cur[i])
                     + anchorV * (measVec[i] - cur[i])
                     - c * curVel[i];
         curVel[i] += accel * frameDt;
