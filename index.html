@@ -793,6 +793,10 @@
   let cur = [0, 0, 1];           // rendered (predicted) vector
   let curVel = [0, 0, 0];        // `cur` velocity, integrated by the settle spring (gives overshoot/coast)
   let wasFast = false;           // previous-frame gate state, to detect the FAST->SLOW edge
+  let springBase = [0, 0, 1];    // co-moving spring setpoint base: seeded to `cur` at the SLOW->FAST
+                                 // edge, then advanced by the motion each frame (no onset step)
+  let leadAcc = 0;               // lead angle baked into the moving setpoint, grown from 0 by
+                                 // accumulated motion toward the guarded predAngle
   let measVec = [0, 0, 1];       // latest measured vector
 
   // Angular-velocity tracking, used to extrapolate `measVec` forward.
@@ -1146,6 +1150,7 @@
       angSpeed = 0; angDecel = 0;
       detVel = 0; velPeak = 0; velValley = 0; settleFast = false; // reset detector to SLOW
       curVel[0] = curVel[1] = curVel[2] = 0; // and the spring-settle velocity
+      springBase = cur.slice(); leadAcc = 0; // and the co-moving setpoint
     }
 
     // Predict the orientation LEAD_MS ahead from angular velocity. (An
@@ -1221,41 +1226,58 @@
     // Target the prediction when on; otherwise the raw reading (pre-update).
     const target = prediction ? rotateAround(measVec, angAxis, predAngle) : measVec;
 
-    // Inertial settle (velocity-coupled spring): while a movement builds/holds
-    // (FAST) `cur` is PACED by the motion's angular velocity (rotated by
-    // angSpeed*dt) so it tracks the rotation rate with no spring lag. On top of
-    // that, an always-on underdamped spring pulls `cur` toward the lead-predicted
-    // `target` and carries its own velocity (curVel) -> it overshoots/coasts like
-    // main's inertial settle; a weak anchor reels `cur` onto raw truth to kill
-    // drift. Once the detector flips SLOW the velocity-follow freezes on a dime,
-    // so `cur` settles under the spring instead of chasing the ringing reading.
+    // Inertial settle (velocity-coupled spring, co-moving setpoint): while a
+    // movement builds/holds (FAST) `cur` is PACED by the motion's angular velocity
+    // (rotated by angSpeed*dt) so it tracks the rotation rate with no spring lag.
+    // The strong spring no longer chases the ABSOLUTE led target (which steps at
+    // the FAST onset and snaps the dot); instead it chases a CO-MOVING setpoint
+    // seeded to `cur` at the SLOW->FAST edge and advanced by the same motion, with
+    // the lead grown in from 0 by accumulated rotation. At onset setpoint == cur,
+    // so the spring has nothing to slam -- it overshoots gently around the paced
+    // setpoint as the lead winds in. A weak anchor reels `cur` onto raw truth to
+    // kill drift. Once the detector flips SLOW the velocity-follow freezes on a
+    // dime, so `cur` settles under the anchor instead of chasing the reading.
     let driveDbg = 1, velDbg = 0, peakDbg = 0;
     if (inertia && prediction) {
       driveDbg = settleFast ? 1 : 0;
       velDbg = detVel;
       peakDbg = velPeak;
 
-      if (settleFast) {            // velocity-follow: pace cur by the motion's rate
-        cur = rotateAround(cur, angAxis, angSpeed * frameDt);
+      if (settleFast) {
+        if (!wasFast) { springBase = cur.slice(); leadAcc = 0; } // snapshot at onset
+        // Advance the setpoint base with the motion, then bleed out the frozen
+        // onset gap (meas - base) toward truth so it can't accumulate over a long
+        // sweep -- slowly enough that it never snaps.
+        springBase = rotateAround(springBase, angAxis, angSpeed * frameDt);
+        const BASE_TRACK = 0.05;
+        for (let i = 0; i < 3; i++) springBase[i] += (measVec[i] - springBase[i]) * BASE_TRACK;
+        // Grow the lead at the motion's own rate until it reaches the guarded
+        // predAngle: leadAcc is literally the rotation accumulated since onset,
+        // capped at the full lead. So the lead emerges from motion, never a step.
+        leadAcc += angSpeed * frameDt;
+        if (Math.abs(leadAcc) > Math.abs(predAngle)) leadAcc = predAngle;
+        if (predAngle === 0) leadAcc = 0;
+        cur = rotateAround(cur, angAxis, angSpeed * frameDt); // velocity-follow
       } else if (wasFast) {
-        // Entering SLOW: shed most of the momentum the strong spring built chasing
-        // the shrinking lead (so it can't fling the dot far past truth), but keep
-        // a little (`coast`) so the dot glides gently through before the weak
-        // anchor settles it onto truth.
+        // Entering SLOW: shed most of the momentum the spring built (so it can't
+        // fling the dot far past truth), but keep a little (`coast`) so the dot
+        // glides gently through before the weak anchor settles it onto truth.
         curVel[0] *= coastV; curVel[1] *= coastV; curVel[2] *= coastV;
       }
       wasFast = settleFast;
 
-      // Spring settle. FAST: a strong spring pulls cur toward the led `target`
-      // (alongside the velocity-follow above) for tight, lead-carrying tracking.
-      // SLOW: the strong term is gated OFF, so only the weak `anchor` toward raw
-      // truth is left and cur settles to rest under it (main's behaviour). Damping
-      // is derived from whichever stiffness is active, so the damping ratio stays
-      // `zeta` in both states. Semi-implicit (symplectic) Euler.
-      const kStrong = settleFast ? springStiffV : 0; // led-target spring, gated off at SLOW
+      // The velocity-paced, lead-grown setpoint (no onset step -> no snap).
+      const moving = rotateAround(springBase, angAxis, leadAcc);
+
+      // Spring settle. FAST: the strong spring pulls cur toward the co-moving
+      // `moving` setpoint for springy, lead-carrying tracking. SLOW: the strong
+      // term is gated OFF, so only the weak `anchor` toward raw truth is left and
+      // cur settles to rest under it. Damping is derived from whichever stiffness
+      // is active, so the damping ratio stays `zeta`. Semi-implicit Euler.
+      const kStrong = settleFast ? springStiffV : 0;
       const c = 2 * Math.sqrt(kStrong + anchorV) * springZetaV;
       for (let i = 0; i < 3; i++) {
-        const accel = kStrong * (target[i] - cur[i])
+        const accel = kStrong * (moving[i] - cur[i])
                     + anchorV * (measVec[i] - cur[i])
                     - c * curVel[i];
         curVel[i] += accel * frameDt;
