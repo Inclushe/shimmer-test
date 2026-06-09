@@ -715,16 +715,17 @@
   //   Snap = underdamped (zeta 0.7), lively with a predictive overshoot
   //   Main = emulate main's inertial settle: collapse the co-moving setpoint onto
   //          the absolute led target (basetrk 1, leadrt high) and kill the
-  //          coast-through (coast 0) so the stop is firm like main's. (Keep Lead
-  //          compensation ON, as it is by default, for the same total lead.)
+  //          coast-through (coast 0) so the stop is firm like main's. drop/rise 0
+  //          defeat the FAST/SLOW gate (it stays FAST), reproducing main's feel
+  //          including its flicker. (Keep Lead compensation ON, as by default.)
   const settlePresets = {
-    soft: { stiffInput: 1000, zetaInput: 1.1, anchorStiffInput: ANCHOR_STIFF, leadTimeInput: LEAD_MS, coastInput: COAST, baseTrackInput: BASE_TRACK, leadRateInput: LEAD_RATE },
-    calm: { stiffInput: 1600, zetaInput: 1.0, anchorStiffInput: ANCHOR_STIFF, leadTimeInput: LEAD_MS, coastInput: COAST, baseTrackInput: BASE_TRACK, leadRateInput: LEAD_RATE },
-    snap: { stiffInput: 2500, zetaInput: 0.7, anchorStiffInput: ANCHOR_STIFF, leadTimeInput: LEAD_MS, coastInput: COAST, baseTrackInput: BASE_TRACK, leadRateInput: LEAD_RATE },
-    main: { stiffInput: 2500, zetaInput: 0.7, anchorStiffInput: ANCHOR_STIFF, leadTimeInput: LEAD_MS, coastInput: 0, baseTrackInput: 1, leadRateInput: 10 },
+    soft: { stiffInput: 1000, zetaInput: 1.1, anchorStiffInput: ANCHOR_STIFF, leadTimeInput: LEAD_MS, coastInput: COAST, baseTrackInput: BASE_TRACK, leadRateInput: LEAD_RATE, dropInput: VEL_DROP, riseInput: VEL_RISE },
+    calm: { stiffInput: 1600, zetaInput: 1.0, anchorStiffInput: ANCHOR_STIFF, leadTimeInput: LEAD_MS, coastInput: COAST, baseTrackInput: BASE_TRACK, leadRateInput: LEAD_RATE, dropInput: VEL_DROP, riseInput: VEL_RISE },
+    snap: { stiffInput: 2500, zetaInput: 0.7, anchorStiffInput: ANCHOR_STIFF, leadTimeInput: LEAD_MS, coastInput: COAST, baseTrackInput: BASE_TRACK, leadRateInput: LEAD_RATE, dropInput: VEL_DROP, riseInput: VEL_RISE },
+    main: { stiffInput: 2500, zetaInput: 0.7, anchorStiffInput: ANCHOR_STIFF, leadTimeInput: LEAD_MS, coastInput: 0, baseTrackInput: 1, leadRateInput: 10, dropInput: 0, riseInput: 0 },
   };
   const presetBtns = document.querySelectorAll(".presets button[data-preset]");
-  const settleInputIds = ["stiffInput", "zetaInput", "anchorStiffInput", "leadTimeInput", "coastInput", "baseTrackInput", "leadRateInput"];
+  const settleInputIds = ["stiffInput", "zetaInput", "anchorStiffInput", "leadTimeInput", "coastInput", "baseTrackInput", "leadRateInput", "dropInput", "riseInput"];
   // Highlight the button whose preset matches the current inputs (none if a value
   // was hand-tuned away from every preset).
   function refreshPresetHighlight() {
