@@ -343,6 +343,8 @@
         <div class="field"><span>zeta</span><input type="number" id="zetaInput" step="0.05" /></div>
         <div class="field"><span>anchor</span><input type="number" id="anchorStiffInput" step="0.5" /></div>
         <div class="field"><span>coast</span><input type="number" id="coastInput" step="0.05" min="0" max="1" /></div>
+        <div class="field"><span>basetrk</span><input type="number" id="baseTrackInput" step="0.01" min="0" max="1" /></div>
+        <div class="field"><span>leadrt</span><input type="number" id="leadRateInput" step="0.1" min="0" /></div>
         <div class="field"><span>drop</span><input type="number" id="dropInput" step="0.05" min="0" max="1" /></div>
         <div class="field"><span>rise</span><input type="number" id="riseInput" step="0.05" /></div>
         <div class="field"><span>vsmooth</span><input type="number" id="vsmoothInput" step="0.05" min="0" max="1" /></div>
@@ -612,6 +614,8 @@
   const SPRING_ZETA  = 0.7;      // damping ratio; c = 2*sqrt(k)*zeta. < 1 overshoots (Snap = 0.7)
   const ANCHOR_STIFF = 1;        // 1/s^2; weak always-on spring toward raw truth (drift correction)
   const COAST = 0.25;            // 0..1; fraction of the motion's momentum kept entering SLOW (coast-through)
+  const BASE_TRACK = 0.05;       // 0..1; per-frame rate the co-moving setpoint base bleeds toward raw truth
+  const LEAD_RATE = 1;           // multiplier on how fast the lead grows in with motion (1 = at the motion's rate)
   // Velocity peak-detector: FAST while the detector velocity climbs/holds at its
   // peak; SLOW once it falls below VEL_DROP of the peak (a movement winding down,
   // latched through to rest); re-arm FAST when it rises VEL_RISE above its valley
@@ -642,6 +646,7 @@
       anchorV = ANCHOR_STIFF;        // 1/s^2; weak spring toward raw truth (the `anchor` field)
   let springStiffV = SPRING_STIFF, springZetaV = SPRING_ZETA; // spring knobs (`stiff`/`zeta`)
   let coastV = COAST;                // momentum kept entering SLOW (the `coast` field)
+  let baseTrackV = BASE_TRACK, leadRateV = LEAD_RATE; // co-moving setpoint knobs (`basetrk`/`leadrt`)
   let velDropV = VEL_DROP, velRiseV = VEL_RISE, velSmoothV = VEL_DET_SMOOTH;
   let accSmoothV = ACC_SMOOTH;       // EMA factor for accel magnitude (debug-editable)
   let sjerkSmoothV = JERK_SMOOTH;    // EMA factor for signed jerk
@@ -696,6 +701,8 @@
   bindThreshold("zetaInput", SPRING_ZETA, (v) => { springZetaV = v; });
   bindThreshold("anchorStiffInput", ANCHOR_STIFF, (v) => { anchorV = v; });
   bindThreshold("coastInput", COAST, (v) => { coastV = v; });
+  bindThreshold("baseTrackInput", BASE_TRACK, (v) => { baseTrackV = v; });
+  bindThreshold("leadRateInput", LEAD_RATE, (v) => { leadRateV = v; });
   bindThreshold("dropInput", VEL_DROP, (v) => { velDropV = v; });
   bindThreshold("riseInput", VEL_RISE, (v) => { velRiseV = v; });
   bindThreshold("vsmoothInput", VEL_DET_SMOOTH, (v) => { velSmoothV = v; });
@@ -1249,12 +1256,11 @@
         // onset gap (meas - base) toward truth so it can't accumulate over a long
         // sweep -- slowly enough that it never snaps.
         springBase = rotateAround(springBase, angAxis, angSpeed * frameDt);
-        const BASE_TRACK = 0.05;
-        for (let i = 0; i < 3; i++) springBase[i] += (measVec[i] - springBase[i]) * BASE_TRACK;
-        // Grow the lead at the motion's own rate until it reaches the guarded
-        // predAngle: leadAcc is literally the rotation accumulated since onset,
-        // capped at the full lead. So the lead emerges from motion, never a step.
-        leadAcc += angSpeed * frameDt;
+        for (let i = 0; i < 3; i++) springBase[i] += (measVec[i] - springBase[i]) * baseTrackV;
+        // Grow the lead at the motion's own rate (scaled by `leadrt`) until it
+        // reaches the guarded predAngle: leadAcc is the rotation accumulated since
+        // onset, capped at the full lead. So the lead emerges from motion, no step.
+        leadAcc += angSpeed * leadRateV * frameDt;
         if (Math.abs(leadAcc) > Math.abs(predAngle)) leadAcc = predAngle;
         if (predAngle === 0) leadAcc = 0;
         cur = rotateAround(cur, angAxis, angSpeed * frameDt); // velocity-follow
